@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Лабораторная работа по CSS</title>
+
+    <!-- Подключение внешнего файла стилей -->
+    <link rel="stylesheet" href="styles.css">
+
+    <!-- Внутренние стили -->
+    <style>
+        .internal-style {
+            background-color: lightblue;
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Лабораторная работа: Введение в CSS</h1>
+
+    <!-- 1. Селектор по тегу -->
+    <section>
+        <h2>1. Селектор по тегу</h2>
+        <p>Этот абзац стилизован через селектор по тегу p { }</p>
+        <p>Все абзацы получают одинаковый стиль</p>
+    </section>
+
+    <!-- 2. Селектор по классу -->
+    <section>
+        <h2>2. Селектор по классу</h2>
+        <p class="red">Этот текст красный (класс .red)</p>
+        <h3 class="red">Заголовок тоже может иметь класс .red</h3>
+        <div class="blue-box">Синий блок с классом .blue-box</div>
+    </section>
+
+    <!-- 3. Селектор по ID -->
+    <section>
+        <h2>3. Селектор по ID</h2>
+        <p id="unique-paragraph">Этот абзац уникален (id = "unique-paragraph")</p>
+        <div id="special-block">Специальный блок с ID</div>
+    </section>
+
+    <!-- 4. Встроенные стили (inline) -->
+    <section>
+        <h2>4. Встроенные стили</h2>
+        <p style="color: green; font-family: Arial; font-size: 20px; font-weight: bold;">
+            Этот текст стилизован встроенными стилями
+        </p>
+        <img src="./css-logo.png"
+             alt="CSS Logo"
+             style="border: 3px solid purple; border-radius: 10px; width:100px; height:100px">
+    </section>
+
+    <!-- 5. Внутренние стили -->
+    <section>
+        <h2>5. Внутренние стили (тег &lt;style&gt;)</h2>
+        <div class="internal-style">
+            Этот блок стилизован через тег &lt;style&gt; в &lt;head&gt;
+        </div>
+    </section>
+
+    <!-- 6. Комбинация стилей -->
+    <section>
+        <h2>6. Комбинация разных селекторов</h2>
+        <p class="red" id="combined">Текст с классом и ID одновременно</p>
+    </section>
+
+    <footer>
+        <p>Конец лабораторной работы</p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,112 @@
+/* ========================================
+   СЕЛЕКТОРЫ ПО ТЕГУ
+   ======================================== */
+
+/* Все абзацы */
+p {
+  color: #333;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+/* Все заголовки h1 */
+h1 {
+  color: #2c3e50;
+  text-align: center;
+  background-color: #f0f0f0;
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+/* Все заголовки h2 */
+h2 {
+  color: #34495e;
+  border-bottom: 2px solid #3498db;
+  padding-bottom: 5px;
+  margin-top: 30px;
+}
+
+/* Все секции */
+section {
+  margin: 20px 0;
+  padding: 15px;
+  background-color: #fafafa;
+  border-left: 4px solid #3498db;
+}
+
+/* Футер */
+footer {
+  margin-top: 40px;
+  text-align: center;
+  background-color: #2c3e50;
+  color: white;
+  padding: 15px;
+}
+
+footer p {
+  color: white;
+  margin: 0;
+}
+
+/* ========================================
+   СЕЛЕКТОРЫ ПО КЛАССУ
+   ======================================== */
+
+/* Класс red - красный текст */
+.red {
+  color: red;
+  font-weight: bold;
+}
+
+/* Класс blue-box - синий блок */
+.blue-box {
+  background-color: #3498db;
+  color: white;
+  padding: 15px;
+  border-radius: 8px;
+  margin-top: 10px;
+}
+
+/* ========================================
+   СЕЛЕКТОРЫ ПО ID
+   ======================================== */
+
+/* ID unique-paragraph */
+#unique-paragraph {
+  background-color: #ffe4b5;
+  padding: 10px;
+  border: 2px dashed #ff8c00;
+  font-style: italic;
+}
+
+/* ID special-block */
+#special-block {
+  background-color: #9b59b6;
+  color: white;
+  padding: 20px;
+  text-align: center;
+  font-size: 18px;
+  margin-top: 10px;
+}
+
+/* ID combined (комбинация с классом) */
+#combined {
+  background-color: yellow;
+  border: 3px solid red;
+  padding: 10px;
+}
+
+/* ========================================
+   ДОПОЛНИТЕЛЬНЫЕ СТИЛИ
+   ======================================== */
+
+body {
+  font-family: "Times New Roman", serif;
+  margin: 20px;
+  background-color: #ffffff;
+}
+
+img {
+  display: block;
+  margin: 10px 0;
+}

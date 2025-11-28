@@ -1,18 +1,10 @@
-low = 1
-high = 1000
-attempts = 0
-guessed = False
+count = int(input())
+total_sum = 0
 
-while attempts < 10 and not guessed:
-    guess = (low + high) // 2
-    print(guess)
+for _ in range(count):
+    number = int(input())
+    while number > 0:
+        total_sum += number % 10
+        number //= 10
 
-    response = input()
-    if response == "Угадал!":
-        guessed = True
-    elif response == "Больше":
-        low = guess + 1
-    elif response == "Меньше":
-        high = guess - 1
-
-    attempts += 1
+print(total_sum)
