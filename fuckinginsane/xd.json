@@ -1,0 +1,320 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "id": "69066ac2",
+      "metadata": { "id": "69066ac2" },
+      "source": [
+        "<center>\n",
+        "\n",
+        "# **Министерство науки и высшего образования Российской Федерации**\n",
+        "\n",
+        "# ФЕДЕРАЛЬНОЕ ГОСУДАРСТВЕННОЕ АВТОНОМНОЕ ОБРАЗОВАТЕЛЬНОЕ УЧРЕЖДЕНИЕ ВЫСШЕГО ОБРАЗОВАНИЯ\n",
+        "\n",
+        "# **НАЦИОНАЛЬНЫЙ ИССЛЕДОВАТЕЛЬСКИЙ УНИВЕРСИТЕТ ИТМО**\n",
+        "\n",
+        "# ITMO University\n",
+        "\n",
+        "\n",
+        "## ШКОЛА РАЗРАБОТКИ ВИДЕОИГР\n",
+        "\n",
+        "&nbsp;\n",
+        "\n",
+        "&nbsp;\n",
+        "\n",
+        "### Отчет по лабораторной работе №1\n",
+        "### по дисциплине «Алгоритмы и структуры данных»\n",
+        "### Тема: Тема работы\n",
+        "### Вариант 1\n",
+        "\n",
+        "&nbsp;\n",
+        "\n",
+        "&nbsp;\n",
+        "\n",
+        "</center>\n",
+        "\n",
+        "<div style=\"text-align: right;\">\n",
+        "\n",
+        "**Выполнил:**<br>\n",
+        "Иванов И.И. (фамилия имя)<br>\n",
+        "АиСД J25 1.1 (номер потока)\n",
+        "\n",
+        "&nbsp;\n",
+        "\n",
+        "**Проверил:**\n",
+        "Аминов Н.С.\n",
+        "</div>\n",
+        "\n",
+        "&nbsp;\n",
+        "\n",
+        "&nbsp;\n",
+        "\n",
+        "<center>\n",
+        "\n",
+        "Санкт-Петербург<br>\n",
+        "2026 г.\n",
+        "\n",
+        "</center>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "**! Этот блок удалить перед защитой работы**\n",
+        "> Придерживайтесь разделения задач по разделам и указания балла за задание в квадратных скобках после названия задания\n",
+        "\n",
+        "> Описание задания должно быть полностью скопировано и **оформлено** из pdf документа задания, указывается даже ограничение по памяти\n",
+        "\n",
+        "> Создавать output файлы не нужно, все результаты необходимо выводить в блокноте, после выполнения блока кода задания\n",
+        "\n",
+        "> Для того, чтобы файлы input были доступны все время, необходимо смонтировать Google Drive и указывать файлы из Google папки со своей фамилией и лабораторной. Пример кода как это сделать – ниже. Файлы input должны иметь нумерацию как у номера задания. Пример: Задание 3 – input_task3\n",
+        "\n",
+        "> Перед тем как смонтировать, необходимо добавить ярлык папки со всеми отчетами (Отчеты 2025/26) в свой Google Диск (правая кнопка мыши на папку с отчетами – Систематизировать – Добавить ярлык).\n",
+        "\n",
+        "```python\n",
+        "import os\n",
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive', force_remount=True)\n",
+        "os.chdir('/content/drive/MyDrive/Отчеты 2025 26/Аминов Натиг Сабитович 1.1/Лабораторная 1')\n",
+        "print(os.getcwd())\n",
+        "\n",
+        "with open('input_task1', 'r') as f:\n",
+        "    input_task1 = f.read()\n",
+        "input_task1\n",
+        "```\n",
+        "> Пример для вычисления времени работы и памяти:\n",
+        "```python\n",
+        "import time\n",
+        "import tracemalloc\n",
+        "tracemalloc.start()\n",
+        "time_start = time.perf_counter()\n",
+        "\n",
+        "#Ваш код\n",
+        "\n",
+        "time_end = time.perf_counter()\n",
+        "print(\"Time to solve: %.5 sec\" % (time_end - time_start))\n",
+        "snapshot = tracemalloc.take_snapshot()\n",
+        "top_stats = snapshot.statistics(\"lineno\")\n",
+        "total_size = sum(stat.size for stat in top_stats)\n",
+        "print(\"Total allocated size: %.1f MB\" % (total_size / 10**6))\n",
+        "tracemalloc.stop()\n",
+        "```"
+      ],
+      "metadata": { "id": "3SAk5uaZiigN" },
+      "id": "3SAk5uaZiigN"
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Здесь вы должны перед написанием кода для каждого задания\n",
+        "# импортировать все библиотеки, константы и другие данные,\n",
+        "# которые используются во всей работе\n",
+        "import time\n",
+        "import tracemalloc\n",
+        "\n",
+        "import os\n",
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive', force_remount=True)\n",
+        "# Ваш путь долже начинаться обязательно так: /content/drive/MyDrive/Отчеты 2025 26/\n",
+        "os.chdir('/content/drive/MyDrive/Отчеты 2025 26/Аминов Натиг Сабитович 1.1/Лабораторная 1')\n",
+        "print(os.getcwd())\n",
+        "\n",
+        "with open('input_task1', 'r') as f:\n",
+        "    input_task1 = f.read()\n",
+        "input_task1"
+      ],
+      "metadata": { "id": "b37cmWtNs8SE" },
+      "id": "b37cmWtNs8SE",
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "id": "6jo4fomcqgj",
+      "metadata": { "id": "6jo4fomcqgj" },
+      "source": [
+        "<center>\n",
+        "\n",
+        "## Задачи по варианту\n",
+        "\n",
+        "</center>\n",
+        "\n",
+        "---"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Задача №1. Название задачи  [N баллов]\n",
+        "\n",
+        "Текст задачи."
+      ],
+      "metadata": { "id": "YYLTQJKDkPpL" },
+      "id": "YYLTQJKDkPpL"
+    },
+    {
+      "cell_type": "markdown",
+      "id": "4g8nso7i55x",
+      "metadata": { "id": "4g8nso7i55x" },
+      "source": ["**Листинг кода:**\n"]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "mveiylsulq",
+      "metadata": { "id": "mveiylsulq" },
+      "outputs": [],
+      "source": [
+        "class Node:\n",
+        "    def __init__(self, num):\n",
+        "        self.key = num\n",
+        "        self.left = None\n",
+        "        self.right = None\n",
+        "        self.height = 1"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "xndh01pjcm8",
+      "metadata": { "id": "xndh01pjcm8" },
+      "source": [
+        "**Текстовое объяснение решения:**\n",
+        "\n",
+        "*(Описание алгоритма и подхода к решению задачи)*"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "tjahf9q3zd",
+      "metadata": { "id": "tjahf9q3zd" },
+      "source": [
+        "**Результат работы кода на примерах из текста задачи:**\n",
+        "\n",
+        "*(скрины input/output файлов)*"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "m49vv26nr6e",
+      "metadata": { "id": "m49vv26nr6e" },
+      "source": [
+        "**Результат работы кода на максимальных и минимальных значениях:**\n",
+        "\n",
+        "*(скрины input/output файлов)*"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "oxz0rcvg21",
+      "metadata": { "id": "oxz0rcvg21" },
+      "source": [
+        "**Проверка задачи на (openedu, acmp и тд при наличии в задаче):**\n",
+        "\n",
+        "*(скрин)*"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "3q07fpfl0i3",
+      "metadata": { "id": "3q07fpfl0i3" },
+      "source": [
+        "| | Время выполнения | Затраты памяти |\n",
+        "|---|---|---|\n",
+        "| Нижняя граница диапазона значений входных данных из текста задачи | | |\n",
+        "| Пример из задачи | | |\n",
+        "| Пример из задачи | | |\n",
+        "| Верхняя граница диапазона значений входных данных из текста задачи | | |"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "wyiy8j9qivl",
+      "metadata": { "id": "wyiy8j9qivl" },
+      "source": ["**Вывод по задаче:**\n", "\n", "*(вывод)*"]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "btpczvfamga",
+      "metadata": { "id": "btpczvfamga" },
+      "source": [
+        "<center>\n",
+        "\n",
+        "## Дополнительные задачи\n",
+        "\n",
+        "</center>\n",
+        "\n",
+        "---"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Задача №1. Название задачи  [N баллов]\n",
+        "\n",
+        "Текст задачи."
+      ],
+      "metadata": { "id": "6mTojY1zo8Fw" },
+      "id": "6mTojY1zo8Fw"
+    },
+    {
+      "cell_type": "markdown",
+      "source": ["**Листинг кода:**"],
+      "metadata": { "id": "YtCxd0Srqtpf" },
+      "id": "YtCxd0Srqtpf"
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "trpvlwngko",
+      "metadata": { "id": "trpvlwngko" },
+      "outputs": [],
+      "source": ["# Код решения"]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "c1mvwmqx48b",
+      "metadata": { "id": "c1mvwmqx48b" },
+      "source": [
+        "**Текстовое объяснение решения:**\n",
+        "\n",
+        "*(Описание алгоритма и подхода к решению задачи)*"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "vmpw7h5k13p",
+      "metadata": { "id": "vmpw7h5k13p" },
+      "source": [
+        "**Результат работы кода на примерах из текста задачи:**\n",
+        "\n",
+        "*(скрины input/output файлов)*"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "id": "re7vzemush",
+      "metadata": { "id": "re7vzemush" },
+      "source": [
+        "**Результат работы кода на максимальных и минимальных значениях:**\n",
+        "\n",
+        "*(скрины input/output файлов)*"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": ["**Вывод по задаче:**\n", "\n", "*(вывод)*"],
+      "metadata": { "id": "wXkWvfc9NSrq" },
+      "id": "wXkWvfc9NSrq"
+    }
+  ],
+  "metadata": {
+    "language_info": { "name": "python" },
+    "colab": {
+      "provenance": [],
+      "runtime_attributes": { "runtime_version": "2026.01" }
+    },
+    "kernelspec": { "name": "python3", "display_name": "Python 3" }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
