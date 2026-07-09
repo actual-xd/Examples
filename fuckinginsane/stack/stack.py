@@ -16,3 +16,6 @@ for i in range(m):
         stack.pop()
 
 output_file.close()
+
+
+print(f'{m:.2f}')

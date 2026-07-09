@@ -1,0 +1,8 @@
+[project]
+name = "tower-defence"
+version = "0.1.0"
+description = "Tower Defence game on pygame"
+requires-python = ">=3.13"
+dependencies = [
+    "pygame>=2.6.1",
+]
