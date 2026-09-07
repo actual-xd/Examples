@@ -43,6 +43,7 @@ waypoints = [
 
 road_cells = set()
 
+
 for x in range(0, 6):
     road_cells.add((x, 6))
 
@@ -60,8 +61,7 @@ for c in range(11, 18):
 
 for r in range(4, 11):
     road_cells.add((17, r))
-
-for c in range(17, 20):
+for c in range(17, 21):
     road_cells.add((c, 4))
 
 
@@ -95,6 +95,9 @@ class Projectile:
             self.target.hp -= self.damage
             if self.target.hp <= 0:
                 self.target.alive = False
+
+                global gold
+                gold += self.target.money
             self.alive = False
         else:
             self.x += dx / dist * self.speed
@@ -102,7 +105,8 @@ class Projectile:
 
     def draw(self, screen):
         if self.alive:
-            pygame.draw.circle(screen, orange, int(self.x), (self.y), 4)
+
+            pygame.draw.circle(screen, orange, (int(self.x), int(self.y)), 4)
 
 
 class Tower:
@@ -112,7 +116,6 @@ class Tower:
         self.cooldown = 0
         self.kind = kind
         self.stats = tower_types[kind]
-
 
     def update(self, enemies):
         if self.cooldown > 0:
@@ -125,21 +128,19 @@ class Tower:
         for e in enemies:
             if not e.alive:
                 continue
-            d = math.hypot((self.x * cell + cell // 2) - e.x, (self.y * cell + cell // 2) -  e.y)
+            d = math.hypot((self.x * cell + cell // 2) - e.x, (self.y * cell + cell // 2) - e.y)
             if d < best_dist:
                 best_target = e
                 best_dist = d
 
         if best_target:
             self.cooldown = self.stats["fire_rate"]
-            return Projectile(self.x * cell + cell // 2 ,  self.y * cell + cell // 2, self.stats["damage"], best_target)
+            return Projectile(self.x * cell + cell // 2, self.y * cell + cell // 2, self.stats["damage"], best_target)
         return None
 
-
-
     def draw(self, screen):
-        tawer = pygame.Rect(self.x * cell + 3, self.y * cell + 3, cell - 6, cell - 6)
-        pygame.draw.rect(screen, self.stats["color"], tawer)
+        tower = pygame.Rect(self.x * cell + 3, self.y * cell + 3, cell - 6, cell - 6)
+        pygame.draw.rect(screen, self.stats["color"], tower)
 
 
 class enemy:
@@ -157,6 +158,12 @@ class enemy:
     def update(self):
         if not self.alive or self.end:
             return
+
+        if self.way_point >= len(waypoints):
+            self.end = True
+            self.alive = False
+            return
+
         new_x, new_y = waypoints[self.way_point]
         d_x, d_y = new_x - self.x, new_y - self.y
         dista = math.hypot(d_x, d_y)
@@ -196,6 +203,12 @@ def update_wave():
 
     if not wave_active:
         return
+
+
+    if enemies_tospawn <= 0 and len(enemies) == 0:
+        wave_active = False
+        return
+
     if enemies_tospawn > 0:
         spawn_timer -= 1
 
@@ -212,7 +225,8 @@ class game:
 
 
 def is_cell_available(gx, gy):
-    if (gx <= 0 or gx >= width // cell) and (gy <= 0 or gy >= height // cell):
+
+    if gx < 0 or gx >= width // cell or gy < 0 or gy >= height // cell:
         return False
     if (gx, gy) in road_cells:
         return False
@@ -227,10 +241,11 @@ while running:
     clock.tick(fps)
 
     for event in pygame.event.get():
-
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
-                start_wave()
+
+                if not wave_active:
+                    start_wave()
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             position = event.pos
@@ -262,7 +277,8 @@ while running:
 
     for e in enemies:
         e.update()
-        if e.end == True:
+
+        if e.end:
             lives -= 1
             e.end = False
 
@@ -282,9 +298,14 @@ while running:
     for proj in Projectiles:
         proj.draw(screen)
 
+
     enemies = [e for e in enemies if e.alive]
     Projectiles = [p for p in Projectiles if p.alive]
 
+
+    if lives <= 0:
+        print("Game Over!")
+        running = False
 
     pygame.display.flip()
 pygame.quit()

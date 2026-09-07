@@ -1,5 +1,6 @@
 import pygame
 import math
+import os
 
 pygame.init()
 width = 800
@@ -16,13 +17,21 @@ red = (200, 0, 0)
 blue = (0, 0, 200)
 orange = (255, 229, 84)
 tower_types = {"fast": {"name": "fast", "color": blue, "cost": 25, "damage": 10, "fire_rate": 20, "range": 150}}
-
+Gold = (255, 230, 20)
 lives = 4
+white = (255, 255, 255)
+
+font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Minecraft.otf")
+
+
+def minecraft_font(size):
+    return pygame.font.Font(font_path, size)
+
 
 wave_number = 0
 wave_active = False
 enemies_tospawn = 0
-gold = 10000000000
+gold = 75
 spawn_timer = 0
 placing = None
 
@@ -60,8 +69,7 @@ for c in range(11, 18):
 
 for r in range(4, 11):
     road_cells.add((17, r))
-
-for c in range(17, 20):
+for c in range(17, 21):
     road_cells.add((c, 4))
 
 
@@ -95,6 +103,9 @@ class Projectile:
             self.target.hp -= self.damage
             if self.target.hp <= 0:
                 self.target.alive = False
+
+                global gold
+                gold += self.target.money
             self.alive = False
         else:
             self.x += dx / dist * self.speed
@@ -102,7 +113,7 @@ class Projectile:
 
     def draw(self, screen):
         if self.alive:
-            pygame.draw.circle(screen, orange, int(self.x), (self.y), 4)
+            pygame.draw.circle(screen, orange, (int(self.x), int(self.y)), 4)
 
 
 class Tower:
@@ -112,7 +123,6 @@ class Tower:
         self.cooldown = 0
         self.kind = kind
         self.stats = tower_types[kind]
-
 
     def update(self, enemies):
         if self.cooldown > 0:
@@ -125,21 +135,19 @@ class Tower:
         for e in enemies:
             if not e.alive:
                 continue
-            d = math.hypot((self.x * cell + cell // 2) - e.x, (self.y * cell + cell // 2) -  e.y)
+            d = math.hypot((self.x * cell + cell // 2) - e.x, (self.y * cell + cell // 2) - e.y)
             if d < best_dist:
                 best_target = e
                 best_dist = d
 
         if best_target:
             self.cooldown = self.stats["fire_rate"]
-            return Projectile(self.x * cell + cell // 2 ,  self.y * cell + cell // 2, self.stats["damage"], best_target)
+            return Projectile(self.x * cell + cell // 2, self.y * cell + cell // 2, self.stats["damage"], best_target)
         return None
 
-
-
     def draw(self, screen):
-        tawer = pygame.Rect(self.x * cell + 3, self.y * cell + 3, cell - 6, cell - 6)
-        pygame.draw.rect(screen, self.stats["color"], tawer)
+        tower = pygame.Rect(self.x * cell + 3, self.y * cell + 3, cell - 6, cell - 6)
+        pygame.draw.rect(screen, self.stats["color"], tower)
 
 
 class enemy:
@@ -157,6 +165,12 @@ class enemy:
     def update(self):
         if not self.alive or self.end:
             return
+
+        if self.way_point >= len(waypoints):
+            self.end = True
+            self.alive = False
+            return
+
         new_x, new_y = waypoints[self.way_point]
         d_x, d_y = new_x - self.x, new_y - self.y
         dista = math.hypot(d_x, d_y)
@@ -196,6 +210,11 @@ def update_wave():
 
     if not wave_active:
         return
+
+    if enemies_tospawn <= 0 and len(enemies) == 0:
+        wave_active = False
+        return
+
     if enemies_tospawn > 0:
         spawn_timer -= 1
 
@@ -212,14 +231,41 @@ class game:
 
 
 def is_cell_available(gx, gy):
-    if (gx <= 0 or gx >= width // cell) and (gy <= 0 or gy >= height // cell):
+    if gx < 0 or gx >= width // cell or gy < 0 or gy >= height // cell:
         return False
     if (gx, gy) in road_cells:
         return False
+    if ( x * cell >= height - 120):
+        return False
+
     for i in Towers:
         if gx == i.x and gy == i.y:
             return False
     return True
+
+
+def draw_text(screen, font, text, color, x, y):
+    t = font.render(text, True, color)
+    screen.blit(t, (x, y))
+
+
+def draw_ui():
+    pygame.draw.rect(screen, black, (0, height - 120, width, 120))
+    font = minecraft_font(24)
+    font_small = minecraft_font(10)
+
+    draw_text(screen, font, f"Gold: {gold}", Gold, 40, height - 80)
+    draw_text(screen, font, f"Lives: {lives}", white, 40, height - 40)
+    draw_text(screen, font, f"Wave: {wave_number}", white, 220, height - 80)
+
+    types = list(tower_types.items())
+
+    for i, (k, v) in enumerate(types):
+        x = 400 + i * 180
+        pygame.draw.rect(screen, v["color"], (x, height - 82, 80, 70))
+        draw_text(screen, font, f"{v["name"]}", black, x + 5, height - 80)
+        draw_text(screen, font, f"{v["cost"]}", black, x + 5, height - 40)
+
 
 
 running = True
@@ -227,10 +273,11 @@ while running:
     clock.tick(fps)
 
     for event in pygame.event.get():
-
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
-                start_wave()
+
+                if not wave_active:
+                    start_wave()
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             position = event.pos
@@ -262,7 +309,8 @@ while running:
 
     for e in enemies:
         e.update()
-        if e.end == True:
+
+        if e.end:
             lives -= 1
             e.end = False
 
@@ -282,9 +330,14 @@ while running:
     for proj in Projectiles:
         proj.draw(screen)
 
+    draw_ui()
+
     enemies = [e for e in enemies if e.alive]
     Projectiles = [p for p in Projectiles if p.alive]
 
+    if lives <= 0:
+        print("Game Over!")
+        running = False
 
     pygame.display.flip()
 pygame.quit()

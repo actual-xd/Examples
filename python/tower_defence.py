@@ -34,21 +34,16 @@ WAYPOINTS = [
     (840, 180),
 ]
 
+# Cells the path crosses, derived from WAYPOINTS so they can't drift apart.
 PATH_CELLS = set()
-for c in range(0, 6):
-    PATH_CELLS.add((c, 6))
-for r in range(2, 7):
-    PATH_CELLS.add((5, r))
-for c in range(5, 12):
-    PATH_CELLS.add((c, 2))
-for r in range(2, 11):
-    PATH_CELLS.add((11, r))
-for c in range(11, 18):
-    PATH_CELLS.add((c, 10))
-for r in range(4, 11):
-    PATH_CELLS.add((17, r))
-for c in range(17, 20):
-    PATH_CELLS.add((c, 4))
+for (x1, y1), (x2, y2) in zip(WAYPOINTS, WAYPOINTS[1:]):
+    c1, r1, c2, r2 = x1 // CELL, y1 // CELL, x2 // CELL, y2 // CELL
+    for c in range(min(c1, c2), max(c1, c2) + 1):
+        for r in range(min(r1, r2), max(r1, r2) + 1):
+            PATH_CELLS.add((c, r))
+
+# ponytail: cannon spread directions precomputed once -> no trig in the hot path.
+_CANNON_DIRS = [(math.cos(i * 0.35), math.sin(i * 0.35)) for i in range(-2, 3)]
 
 def draw_text(surf, font, text, color, x, y, shadow=(0,0,0)):
     if shadow:
@@ -188,18 +183,14 @@ class Tower:
         if self.kind == "cannon":
             dx = best.x - self.x
             dy = best.y - self.y
-            d = math.hypot(dx, dy)
-            if d > 0:
-                dx /= d
-                dy /= d
-            spread = 0.35
+            d = math.hypot(dx, dy) or 1
+            ux, uy = dx / d, dy / d  # unit aim vector = (cos base, sin base)
             result = []
-            for i in range(-2, 3):
-                a = math.atan2(dy, dx) + i * spread
-                p = Projectile(self.x, self.y, best, self.stats["damage"],
-                               piercing=True, size=6, vx=math.cos(a), vy=math.sin(a),
-                               color=ORANGE, src_x=self.x, src_y=self.y, max_range=rng)
-                result.append(p)
+            for co, so in _CANNON_DIRS:  # rotate each preset spread dir by the aim
+                result.append(Projectile(self.x, self.y, best, self.stats["damage"],
+                              piercing=True, size=6,
+                              vx=ux * co - uy * so, vy=ux * so + uy * co,
+                              color=ORANGE, src_x=self.x, src_y=self.y, max_range=rng))
             return result
         return [Projectile(self.x, self.y, best, self.stats["damage"],
                            src_x=self.x, src_y=self.y, max_range=rng)]
@@ -234,8 +225,8 @@ class Game:
         self.placing_cell = None
         self.delete_cell = None
         self.wave_timer = 0
-        self.font = pygame.font.SysFont("Segoe UI", 16)
-        self.big = pygame.font.SysFont("Segoe UI", 24)
+        self.font = pygame.font.SysFont("Inter", 14)
+        self.big = pygame.font.SysFont("Inter", 20)
         self.game_over = False
 
     def start_wave(self):
@@ -326,26 +317,22 @@ class Game:
             cx = gx * CELL + CELL // 2
             cy = gy * CELL + CELL // 2
             rd = 50
-            s = pygame.Surface((rd * 2,) * 2, pygame.SRCALPHA)
-            s.fill((0, 0, 0, 0))
+            s = pygame.Surface((rd * 2, rd * 2), pygame.SRCALPHA)
             pygame.draw.circle(s, (40, 40, 40, 220), (rd, rd), rd)
-            s2 = pygame.Surface((rd * 2,) * 2, pygame.SRCALPHA)
-            for i, (key, info) in enumerate(TOWER_TYPES.items()):
-                points = [(rd, rd)]
-                for j in range(31):
-                    a = math.radians(i * 180 - 90 + 180 * j / 30)
-                    points.append((rd + rd * math.cos(a), rd + rd * math.sin(a)))
-                pygame.draw.polygon(s2, info["color"] + (180,), points)
+            # ponytail: two semicircles via rect clipping — no trig for the wedges.
+            s2 = pygame.Surface((rd * 2, rd * 2), pygame.SRCALPHA)
+            colors = [info["color"] + (180,) for info in TOWER_TYPES.values()]
+            s2.set_clip(pygame.Rect(rd, 0, rd, rd * 2))
+            pygame.draw.circle(s2, colors[0], (rd, rd), rd)  # right half = rapid
+            s2.set_clip(pygame.Rect(0, 0, rd, rd * 2))
+            pygame.draw.circle(s2, colors[1], (rd, rd), rd)  # left half = cannon
             screen.blit(s, (cx - rd, cy - rd))
             screen.blit(s2, (cx - rd, cy - rd))
             pygame.draw.circle(screen, WHITE, (cx, cy), rd, 2)
             pygame.draw.line(screen, WHITE, (cx, cy - rd), (cx, cy + rd), 2)
-            for i, (key, info) in enumerate(TOWER_TYPES.items()):
-                mid_a = math.radians(i * 180)
-                lx = cx + rd * 0.55 * math.cos(mid_a)
-                ly = cy + rd * 0.55 * math.sin(mid_a)
-                draw_text(screen, self.font, info["name"], BLACK, lx - self.font.size(info["name"])[0] // 2, ly - 10)
-                draw_text(screen, self.font, f"${info['cost']}", BLACK, lx - self.font.size(f"${info['cost']}")[0] // 2, ly + 4)
+            for lx, (key, info) in zip((cx + rd * 0.55, cx - rd * 0.55), TOWER_TYPES.items()):
+                draw_text(screen, self.font, info["name"], BLACK, lx - self.font.size(info["name"])[0] // 2, cy - 10)
+                draw_text(screen, self.font, f"${info['cost']}", BLACK, lx - self.font.size(f"${info['cost']}")[0] // 2, cy + 4)
 
         if self.delete_cell:
             gx, gy = self.delete_cell
@@ -442,8 +429,7 @@ class Game:
             cx = gx * CELL + CELL // 2
             cy = gy * CELL + CELL // 2
             if math.hypot(pos[0] - cx, pos[1] - cy) <= 50:
-                angle = math.degrees(math.atan2(pos[1] - cy, pos[0] - cx))
-                kind = "cannon" if (angle < -90 or angle >= 90) else "rapid"
+                kind = "cannon" if pos[0] - cx < 0 else "rapid"  # left half = cannon
                 cost = TOWER_TYPES[kind]["cost"]
                 if self.gold >= cost:
                     self.towers.append(Tower(gx, gy, kind))
