@@ -69,11 +69,11 @@ TOWER_TYPES = {
     },
     "cannon": {
         "name": "Cannon",
-        "damage": 60,
-        "fire_rate": 75,
+        "damage": 75,
+        "fire_rate": 60,
         "range": 120,
         "color": ORANGE,
-        "cost": 250,
+        "cost": 200,
     },
 }
 
@@ -216,6 +216,7 @@ class Enemy:
         self.speed = speed
         self.gold = gold
         self.waypoint_index = 0
+        self.distance_travelled = 0
         self.x, self.y = WAYPOINTS[0]
         self.alive = True
         self.reached_end = False
@@ -227,12 +228,14 @@ class Enemy:
         dx, dy = target_x - self.x, target_y - self.y
         distance = math.hypot(dx, dy)
         if distance <= self.speed:
+            self.distance_travelled += distance
             self.x, self.y = target_x, target_y
             self.waypoint_index += 1
             if self.waypoint_index >= len(WAYPOINTS):
                 self.alive = False
                 self.reached_end = True
         else:
+            self.distance_travelled += self.speed
             self.x += dx / distance * self.speed
             self.y += dy / distance * self.speed
 
@@ -310,16 +313,21 @@ class Tower:
         if self.cooldown:
             self.cooldown -= 1
             return []
-        target = None
-        target_distance = self.stats["range"]
+        in_range = []
         for enemy in enemies:
             if not enemy.alive or enemy.reached_end:
                 continue
             distance = math.hypot(self.x - enemy.x, self.y - enemy.y)
-            if distance < target_distance:
-                target, target_distance = enemy, distance
-        if target is None:
+            if distance < self.stats["range"]:
+                in_range.append(enemy)
+        if not in_range:
             return []
+        final_section = [
+            enemy for enemy in in_range if enemy.waypoint_index >= len(WAYPOINTS) - 2
+        ]
+        target = max(final_section, key=lambda enemy: enemy.distance_travelled) if final_section else min(
+            in_range, key=lambda enemy: math.hypot(self.x - enemy.x, self.y - enemy.y)
+        )
         self.cooldown = self.stats["fire_rate"]
         if self.kind == "cannon":
             dx, dy = target.x - self.x, target.y - self.y

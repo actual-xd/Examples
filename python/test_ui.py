@@ -104,6 +104,27 @@ class UiBehaviorTests(unittest.TestCase):
         app.game.draw(self.screen)
         self.assertEqual(self.screen.get_at((860, 180))[:3], self.ui.PATH)
 
+    def test_cannon_has_viable_single_target_balance(self):
+        cannon = self.ui.TOWER_TYPES["cannon"]
+        self.assertEqual(cannon["cost"], 200)
+        self.assertEqual(cannon["damage"], 75)
+        self.assertEqual(cannon["fire_rate"], 60)
+
+    def test_tower_prioritizes_enemy_on_final_path_section(self):
+        tower = self.ui.Tower(18, 3, "rapid")
+        near_enemy = self.ui.Enemy(50, 1.5, 8)
+        near_enemy.x, near_enemy.y = 700, 180
+        near_enemy.waypoint_index = len(self.ui.WAYPOINTS) - 3
+        near_enemy.distance_travelled = 1200
+        far_enemy = self.ui.Enemy(50, 1.5, 8)
+        far_enemy.x, far_enemy.y = 820, 180
+        far_enemy.waypoint_index = len(self.ui.WAYPOINTS) - 2
+        far_enemy.distance_travelled = 1500
+
+        projectiles = tower.update([near_enemy, far_enemy])
+
+        self.assertEqual(projectiles[0].target, far_enemy)
+
 
 if __name__ == "__main__":
     unittest.main()
