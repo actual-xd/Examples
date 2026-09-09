@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `ui.py` a standalone Pygame tower-defence application with a menu, volume settings, manual-only waves, and a curved brick wall.
+**Goal:** Make `ui.py` a standalone Pygame tower-defence application with a menu, volume settings, manual-only waves, a Minecraft-font UI, and a straight brick wall outside the road.
 
-**Architecture:** Replace the import-time global loop with `App`, `Game`, and small rendering helpers in one file. `App` owns `MENU`, `SETTINGS`, and `GAME` state; `Game` owns tower-defence mechanics; `build_brick_wall()` owns deterministic wall geometry and rendering. `ui.py` imports only Python standard library and `pygame`.
+**Architecture:** Replace the import-time global loop with `App`, `Game`, and small rendering helpers in one file. `App` owns `MENU`, `SETTINGS`, and `GAME` state; `Game` owns tower-defence mechanics and a 40x40 cell grid; `build_brick_wall()` owns deterministic straight-wall rendering outside the route. `ui.py` imports only Python standard library and `pygame`.
 
 **Tech Stack:** Python 3.13, Pygame 2.6.1, `unittest`, SDL dummy video driver for smoke tests.
 
@@ -16,7 +16,9 @@
 - Initial screen is `MENU`.
 - Wave starts only from Start Wave click or `SPACE`; no auto-start timer.
 - Volume is clamped to `[0, 100]` and stored in memory.
-- Right wall is a solid curved/semicircular brick surface with brown variation and black seams; no old gate, flags, crenellations, sine strips, or shadow.
+- Right wall is a straight rectangular brick surface outside the road with brown variation and black seams; no semicircle, gate, flags, crenellations, sine strips, or shadow.
+- Use `Minecraft.otf` and `td-ui.py` game UI margins: 120px bottom bar, Gold/Lives x=40, Wave x=220, tower buttons x=400, y=height-82, size 80x70.
+- Keep `WIDTH=1000`, `HEIGHT=720`, `CELL=40`, and route waypoints on cell centers.
 
 ---
 
@@ -208,17 +210,15 @@ Run the focused test and confirm it fails if the surface is not alpha-enabled.
 
 - [ ] **Step 2: Implement deterministic wall rendering**
 
-`build_brick_wall()` creates an alpha surface, fills a right-side wall shape from a rectangle plus a clipped semicircular bulge, then draws staggered brown brick rectangles and black mortar. Use a fixed color sequence indexed by `(row + column) % 3`; do not use random state. Use curved sampled polylines for horizontal seams and staggered vertical seams. Do not draw gate, flags, crenellations, sine strips, or the old shadow.
+`build_brick_wall()` creates an alpha surface, fills a straight right-side rectangle outside the road, then draws staggered brown brick rectangles and black mortar. Use a fixed color sequence indexed by `(row + column) % 3`; do not use random state. Do not draw a semicircle, gate, flags, crenellations, sine strips, or the old shadow.
 
 Required core shape and palette:
 
 ```python
 wall = pygame.Surface(size, pygame.SRCALPHA)
-wall_width = 190
+wall_width = 120
 left = width - wall_width
-shape = pygame.Rect(left + 70, 0, wall_width - 70, height)
-pygame.draw.rect(wall, WALL_BASE, shape)
-pygame.draw.ellipse(wall, WALL_BASE, (left - 80, -30, 250, height + 60))
+pygame.draw.rect(wall, WALL_BASE, (left, 0, wall_width, height))
 brick_colors = (DARK_BRICK, BRICK_RED, BRICK_HIGHLIGHT)
 ```
 

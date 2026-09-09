@@ -5,52 +5,57 @@ Run with: python ui.py
 
 from enum import Enum, auto
 import math
+from pathlib import Path
 
 import pygame
 
 
-WIDTH, HEIGHT = 800, 600
+WIDTH, HEIGHT = 1000, 720
 FPS = 60
 CELL = 40
-UI_BAR_HEIGHT = 72
+UI_BAR_HEIGHT = 120
+PLAYFIELD_HEIGHT = HEIGHT - UI_BAR_HEIGHT
+WALL_WIDTH = 120
+WALL_LEFT = WIDTH - WALL_WIDTH
 GRID_COLS = WIDTH // CELL
-GRID_ROWS = (HEIGHT - UI_BAR_HEIGHT) // CELL
+GRID_ROWS = PLAYFIELD_HEIGHT // CELL
+FONT_PATH = Path(__file__).with_name("Minecraft.otf")
 
-# Palette
-WHITE = (242, 245, 238)
-BLACK = (20, 18, 18)
-INK = (22, 31, 29)
-PANEL = (13, 23, 25)
-PANEL_LIGHT = (27, 43, 42)
-FIELD = (35, 91, 67)
-FIELD_DARK = (27, 70, 55)
-PATH = (170, 139, 91)
-PATH_EDGE = (107, 82, 58)
-GOLD = (246, 197, 74)
-RED = (217, 75, 66)
-HP_GREEN = (99, 207, 117)
-GREEN = (80, 216, 144)
-GREEN_DARK = (37, 132, 91)
-GREEN_HOVER = (103, 235, 162)
-BLUE = (75, 168, 220)
-ORANGE = (239, 151, 66)
-GRAY = (145, 161, 154)
-DARK_GRAY = (75, 91, 87)
+# Palette follows td-ui.py for field, path, panel, and tower colors.
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+INK = BLACK
+PANEL = BLACK
+PANEL_LIGHT = (35, 35, 35)
+FIELD = (0, 100, 0)
+FIELD_DARK = BLACK
+PATH = (176, 163, 44)
+PATH_EDGE = BLACK
+GOLD = (255, 230, 20)
+RED = (200, 0, 0)
+HP_GREEN = (0, 100, 0)
+GREEN = (0, 100, 0)
+GREEN_DARK = (0, 70, 0)
+GREEN_HOVER = (60, 170, 60)
+BLUE = (0, 0, 200)
+ORANGE = (255, 229, 84)
+GRAY = (145, 145, 145)
+DARK_GRAY = (80, 80, 80)
 BRICK_RED = (139, 69, 43)
 DARK_BRICK = (91, 54, 39)
 BRICK_HIGHLIGHT = (171, 91, 54)
 WALL_BASE = (116, 64, 43)
-MORTAR = (16, 19, 18)
+MORTAR = BLACK
 
 WAYPOINTS = [
     (-40, 260),
-    (200, 260),
-    (200, 100),
+    (220, 260),
+    (220, 100),
     (460, 100),
     (460, 420),
     (700, 420),
     (700, 180),
-    (840, 180),
+    (860, 180),
 ]
 
 TOWER_TYPES = {
@@ -89,6 +94,12 @@ class ScreenState(Enum):
 
 def clamp(value, low, high):
     return max(low, min(high, value))
+
+
+def minecraft_font(size):
+    if FONT_PATH.exists():
+        return pygame.font.Font(str(FONT_PATH), size)
+    return pygame.font.SysFont("arial", size)
 
 
 def draw_text(surface, font, text, color, position, shadow=BLACK):
@@ -144,88 +155,46 @@ def draw_gear_icon(surface, center, radius, color=WHITE):
     pygame.draw.circle(surface, PANEL, center, int(radius * 0.3))
 
 
-def wall_boundary_x(y, width, height):
-    """Return left edge of the wall's curved semicircle in local coordinates."""
-    wall_width = min(190, max(130, width // 4))
-    left = width - wall_width
-    center_x, center_y = left + 45, height / 2
-    radius_x, radius_y = 125, height / 2 + 30
-    normalized_y = (y - center_y) / radius_y
-    if abs(normalized_y) >= 1:
-        ellipse_left = center_x
-    else:
-        ellipse_left = center_x - radius_x * math.sqrt(1 - normalized_y * normalized_y)
-    return max(left, min(width, ellipse_left))
-
-
 def build_brick_wall(size):
-    """Build a deterministic alpha layer containing the right-side brick wall."""
+    """Build a straight brick wall outside the road and buildable grid."""
     width, height = size
     wall = pygame.Surface(size, pygame.SRCALPHA)
-    wall_width = min(190, max(130, width // 4))
+    wall_width = min(WALL_WIDTH, width)
     left = width - wall_width
+    pygame.draw.rect(wall, WALL_BASE, (left, 0, wall_width, height))
 
-    # Solid base: narrow full-height wall plus a semicircular bulge.
-    pygame.draw.rect(wall, WALL_BASE, (left + 70, 0, wall_width - 70, height))
-    pygame.draw.ellipse(wall, WALL_BASE, (left - 80, -30, 250, height + 60))
-
-    brick_height = 30
-    brick_width = 58
+    brick_height = 32
+    brick_width = 64
     for row, y in enumerate(range(0, height, brick_height)):
-        row_start = int(wall_boundary_x(y + brick_height // 2, width, height))
         offset = 0 if row % 2 == 0 else brick_width // 2
-        x = row_start - offset
-        column = -1
-        while x < width:
-            column += 1
-            brick_left = max(row_start, x + 2)
+        pygame.draw.line(wall, MORTAR, (left, y), (width, y), 3)
+        for column, x in enumerate(range(left - brick_width + offset, width, brick_width)):
+            brick_left = max(left + 2, x + 2)
             brick_right = min(width - 2, x + brick_width - 2)
-            if brick_right > brick_left:
-                color = (DARK_BRICK, BRICK_RED, BRICK_HIGHLIGHT)[(row + column) % 3]
-                pygame.draw.rect(
-                    wall,
-                    color,
-                    (brick_left, y + 2, brick_right - brick_left, brick_height - 4),
-                )
-                pygame.draw.line(
-                    wall,
-                    tuple(min(255, channel + 24) for channel in color),
-                    (brick_left + 3, y + 4),
-                    (brick_right - 3, y + 4),
-                    1,
-                )
-            x += brick_width
-
-        seam_y = y
-        points = []
-        for sample in range(max(left, row_start), width + 1, 8):
-            curve = int(4 * math.sin((sample - left) / max(1, wall_width) * math.pi))
-            points.append((sample, seam_y + curve))
-        if len(points) > 1:
-            pygame.draw.lines(wall, MORTAR, False, points, 3)
-
-        for seam_x in range(row_start, width + brick_width, brick_width):
-            x_position = seam_x + offset
+            if brick_right <= brick_left:
+                continue
+            color = (DARK_BRICK, BRICK_RED, BRICK_HIGHLIGHT)[(row + column) % 3]
+            pygame.draw.rect(wall, color, (brick_left, y + 2, brick_right - brick_left, brick_height - 4))
             pygame.draw.line(
                 wall,
-                MORTAR,
-                (x_position, y + 1),
-                (x_position, min(height, y + brick_height)),
-                3,
+                tuple(min(255, channel + 24) for channel in color),
+                (brick_left + 3, y + 4),
+                (brick_right - 3, y + 4),
+                1,
             )
+        for seam_x in range(left + offset, width, brick_width):
+            pygame.draw.line(wall, MORTAR, (seam_x, y), (seam_x, min(height, y + brick_height)), 3)
 
-    # Dark outer contour reinforces the semicircle silhouette.
-    ellipse_rect = (left - 80, -30, 250, height + 60)
-    pygame.draw.ellipse(wall, MORTAR, ellipse_rect, 3)
+    pygame.draw.rect(wall, BLACK, (left, 0, wall_width, height), 2)
     return wall
 
 
 def draw_field(surface):
     surface.fill(FIELD)
-    for y in range(0, HEIGHT - UI_BAR_HEIGHT, 32):
+    for y in range(0, PLAYFIELD_HEIGHT, CELL):
         pygame.draw.line(surface, FIELD_DARK, (0, y), (WIDTH, y), 1)
-    for x in range(0, WIDTH, CELL):
-        pygame.draw.line(surface, FIELD_DARK, (x, 0), (x, HEIGHT - UI_BAR_HEIGHT), 1)
+    for x in range(0, WIDTH + 1, CELL):
+        pygame.draw.line(surface, FIELD_DARK, (x, 0), (x, PLAYFIELD_HEIGHT), 1)
 
 
 def draw_path(surface):
@@ -390,9 +359,9 @@ class Tower:
 
 class Game:
     def __init__(self):
-        self.font = pygame.font.SysFont("arial", 16)
-        self.small_font = pygame.font.SysFont("arial", 13)
-        self.big_font = pygame.font.SysFont("arial", 24, bold=True)
+        self.font = minecraft_font(24)
+        self.small_font = minecraft_font(12)
+        self.big_font = minecraft_font(28)
         self.reset()
 
     def reset(self):
@@ -498,6 +467,8 @@ class Game:
         col, row = position[0] // CELL, position[1] // CELL
         if not (0 <= col < GRID_COLS and 0 <= row < GRID_ROWS):
             return
+        if position[0] >= WALL_LEFT:
+            return
         for tower in self.towers:
             if (tower.col, tower.row) == (col, row):
                 self.delete_cell = (col, row)
@@ -506,9 +477,8 @@ class Game:
             self.placing_cell = (col, row)
 
     def draw(self, surface):
-        draw_field(surface)
-        surface.blit(build_brick_wall((WIDTH, HEIGHT - UI_BAR_HEIGHT)), (0, 0))
-        draw_path(surface)
+        draw_grid_and_path(surface)
+        surface.blit(build_brick_wall((WIDTH, PLAYFIELD_HEIGHT)), (0, 0))
         for tower in self.towers:
             show_range = self.hover_cell == (tower.col, tower.row)
             tower.draw(surface, show_range)
@@ -529,27 +499,27 @@ class Game:
 
     def _draw_ui(self, surface):
         bar = pygame.Rect(0, HEIGHT - UI_BAR_HEIGHT, WIDTH, UI_BAR_HEIGHT)
-        pygame.draw.rect(surface, PANEL, bar)
-        pygame.draw.line(surface, PANEL_LIGHT, bar.topleft, (WIDTH, bar.top), 2)
-        draw_text(surface, self.font, f"{self.gold}", GOLD, (18, HEIGHT - 57))
-        draw_text(surface, self.small_font, "GOLD", GRAY, (18, HEIGHT - 31))
-        draw_text(surface, self.font, f"{self.lives}", RED if self.lives < 2 else WHITE, (112, HEIGHT - 57))
-        draw_text(surface, self.small_font, "LIVES", GRAY, (112, HEIGHT - 31))
-        draw_text(surface, self.font, f"WAVE {self.wave}", WHITE, (168, HEIGHT - 48))
+        pygame.draw.rect(surface, BLACK, bar)
+        font = minecraft_font(24)
+        small_font = minecraft_font(10)
+        draw_text(surface, font, f"Gold: {self.gold}", GOLD, (40, HEIGHT - 80), None)
+        draw_text(surface, font, f"Lives: {self.lives}", WHITE, (40, HEIGHT - 40), None)
+        draw_text(surface, font, f"Wave: {self.wave}", WHITE, (220, HEIGHT - 80), None)
 
         for index, (kind, info) in enumerate(TOWER_TYPES.items()):
-            rect = pygame.Rect(220 + index * 180, HEIGHT - 58, 125, 48)
-            pygame.draw.rect(surface, (*info["color"], 220), rect, border_radius=8)
-            pygame.draw.rect(surface, GOLD if self.selected == kind else WHITE, rect, 2, border_radius=8)
-            draw_text(surface, self.small_font, info["name"], BLACK, (rect.x + 10, rect.y + 7), None)
-            draw_text(surface, self.small_font, f"{info['cost']} gold", BLACK, (rect.x + 10, rect.y + 26), None)
+            rect = pygame.Rect(400 + index * 180, HEIGHT - 82, 80, 70)
+            pygame.draw.rect(surface, info["color"], rect)
+            border = GOLD if self.selected == kind else WHITE
+            pygame.draw.rect(surface, border, rect, 2)
+            draw_text(surface, small_font, info["name"], BLACK, (rect.x + 5, HEIGHT - 80), None)
+            draw_text(surface, small_font, str(info["cost"]), BLACK, (rect.x + 5, HEIGHT - 40), None)
 
-        if not self.wave_active:
+        if not self.wave_active and not self.game_over:
             center = (44, 260)
-            pygame.draw.circle(surface, GREEN_DARK, center, 28)
-            pygame.draw.circle(surface, GREEN_HOVER, center, 28, 2)
+            pygame.draw.circle(surface, GREEN, center, 28)
+            pygame.draw.circle(surface, WHITE, center, 28, 2)
             draw_play_icon(surface, center, 20)
-            draw_text(surface, self.small_font, "START WAVE", WHITE, (79, 250))
+            draw_text(surface, small_font, "START", WHITE, (79, 250), None)
 
     def _draw_place_menu(self, surface):
         if not self.placing_cell:
@@ -582,10 +552,10 @@ class App:
         self.volume = 60
         self.dragging_volume = False
         self.mouse_pos = (0, 0)
-        self.title_font = pygame.font.SysFont("arial", 42, bold=True)
-        self.subtitle_font = pygame.font.SysFont("arial", 16)
-        self.button_font = pygame.font.SysFont("arial", 18, bold=True)
-        self.font = pygame.font.SysFont("arial", 16)
+        self.title_font = minecraft_font(42)
+        self.subtitle_font = minecraft_font(16)
+        self.button_font = minecraft_font(18)
+        self.font = minecraft_font(16)
         self.play_button = pygame.Rect(WIDTH // 2 - 62, 276, 124, 124)
         self.settings_button = pygame.Rect(34, HEIGHT // 2 - 32, 64, 64)
         self.back_button = pygame.Rect(34, 34, 116, 44)
@@ -609,7 +579,11 @@ class App:
                 self.set_volume_from_x(event.pos[0])
             elif self.state is ScreenState.GAME:
                 col, row = event.pos[0] // CELL, event.pos[1] // CELL
-                self.game.hover_cell = (col, row) if 0 <= col < GRID_COLS and 0 <= row < GRID_ROWS else None
+                self.game.hover_cell = (
+                    (col, row)
+                    if 0 <= col < GRID_COLS and 0 <= row < GRID_ROWS and event.pos[0] < WALL_LEFT
+                    else None
+                )
             return
         if self.state is ScreenState.MENU:
             self._handle_menu_event(event)
@@ -627,11 +601,13 @@ class App:
 
     def _handle_settings_event(self, event):
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            self.dragging_volume = False
             self.state = ScreenState.MENU
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging_volume = False
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.back_button.collidepoint(event.pos):
+                self.dragging_volume = False
                 self.state = ScreenState.MENU
             elif self.volume_track.inflate(40, 30).collidepoint(event.pos):
                 self.dragging_volume = True

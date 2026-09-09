@@ -4,8 +4,9 @@
 
 Improve the Pygame application in `ui.py` as a fully standalone file.
 `ui.py` must not import or depend on `tower_defence.py`. Add a menu-first flow,
-volume settings, manual wave start, and a solid curved brick wall on the right
-side. Keep the existing tower-defence mechanics, but remove global state and
+volume settings, manual wave start, and a straight brick wall on the far right
+outside the road. Keep the existing tower-defence mechanics, but remove global
+state and
 separate game behavior from screen flow.
 
 ## Scope
@@ -21,11 +22,16 @@ separate game behavior from screen flow.
 - `SPACE` starts a wave; `ESC` returns to menu without resetting the game;
   `R` restarts after Game Over.
 - Replace the current sine-shifted wall, gate, flags, crenellations, and shadow
-  with a solid right-side semicircular brick wall.
-- Draw brick fills with varied brown tones, black curved horizontal mortar
-  lines, and staggered vertical seams.
+  with a straight solid brick wall beyond the road on the far right.
+- Draw brick fills with varied brown tones, black horizontal mortar lines, and
+  staggered vertical seams.
+- Keep the gameplay grid aligned to 40x40 cells and keep enemy waypoints on cell
+  center lines.
+- Use `Minecraft.otf` and copy game UI panel colors and margins from `td-ui.py`:
+  120px bottom bar, black panel, Gold/Lives at x=40, Wave at x=220, and 80x70
+  tower buttons starting at x=400.
 - Improve visual hierarchy, hover states, panels, status display, and Game Over
-  overlay using Pygame primitives and system fonts only.
+  overlay using Pygame primitives and the bundled Minecraft font.
 - Add focused tests for screen flow, manual wave behavior, volume bounds, and
   wall geometry helpers where practical.
 
@@ -52,8 +58,10 @@ Start Wave button or `SPACE` while in the game screen.
 
 ## Visual design
 
-- Dark navy-green menu background with green accent `#50D890`.
-- Deep green play field with a warm path and dark translucent UI panels.
+- Dark navy-green menu background with green accent.
+- `td-ui.py` game palette: green field `(0, 100, 0)`, yellow path `(176, 163,
+  44)`, black bottom panel, blue rapid tower `(0, 0, 200)`, yellow-orange
+  cannon `(255, 229, 84)`, and gold `(255, 230, 20)`.
 - Gold currency, white labels, red danger states, and consistent shadows.
 - Menu title `TOWER DEFENCE` with subtitle `BUILD · DEFEND · SURVIVE`.
 - Circular Play button has shadow, outline, hover color, and white triangle.
@@ -61,15 +69,14 @@ Start Wave button or `SPACE` while in the game screen.
 - Game status is compact and readable; tower selection and wave control are
   visually distinct.
 
-## Curved wall
+## Right brick wall
 
-The wall is rendered to a transparent surface clipped by a filled semicircle
-near the right edge. The surface is filled with staggered brick rows. Each row
-uses a curved horizontal seam derived from the semicircle boundary. Vertical
-seams are placed between neighboring bricks and clipped to the wall mask.
-Brick colors are deterministic and varied among dark, base, and highlighted
-brown tones. Mortar lines are black with a small width. The wall must not
-reintroduce the old gate, flags, crenellations, sine offsets, or strip shadow.
+The wall is rendered to a transparent rectangular surface at the far right,
+starting after the last road cell. The surface is filled with staggered brick
+rows. Horizontal and vertical mortar lines are straight black lines. Brick
+colors are deterministic and varied among dark, base, and highlighted brown
+tones. The wall must not reintroduce the old gate, flags, crenellations,
+semicircle, sine offsets, or strip shadow. Wall cells are not buildable.
 
 ## Behavior requirements
 
@@ -78,6 +85,9 @@ reintroduce the old gate, flags, crenellations, sine offsets, or strip shadow.
   over.
 - Volume slider clamps to `[0, 100]`.
 - Menu and settings controls react to mouse clicks and hover.
+- The gameplay grid is `40x40` with no visual offsets; towers and enemies use
+  its cell centers.
+- Enemy waypoints are centered on road cells.
 - Game controls retain existing mouse placement/deletion and keyboard tower
   selection behavior.
 - Closing the window exits cleanly.
