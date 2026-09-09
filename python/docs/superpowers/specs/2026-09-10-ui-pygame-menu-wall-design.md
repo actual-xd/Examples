@@ -2,10 +2,11 @@
 
 ## Goal
 
-Improve the Pygame application in `ui.py` without modifying `tower_defence.py`.
-Add a menu-first flow, volume settings, manual wave start, and a solid curved
-brick wall on the right side. Keep the existing tower-defence mechanics, but
-remove global state and separate game behavior from screen flow.
+Improve the Pygame application in `ui.py` as a fully standalone file.
+`ui.py` must not import or depend on `tower_defence.py`. Add a menu-first flow,
+volume settings, manual wave start, and a solid curved brick wall on the right
+side. Keep the existing tower-defence mechanics, but remove global state and
+separate game behavior from screen flow.
 
 ## Scope
 
@@ -30,7 +31,8 @@ remove global state and separate game behavior from screen flow.
 
 ### Out of scope
 
-- Changes to `tower_defence.py`.
+- Changes to `tower_defence.py`; that file remains untouched.
+- Any import or runtime dependency from `ui.py` to `tower_defence.py`.
 - New external dependencies.
 - Audio assets or actual sound playback. Volume is persisted in the current
   process and ready for future audio integration.
@@ -89,3 +91,4 @@ reintroduce the old gate, flags, crenellations, sine offsets, or strip shadow.
 - Run a headless Pygame smoke test with `SDL_VIDEODRIVER=dummy` that creates the
   app and renders each screen without opening a window.
 - Confirm `tower_defence.py` remains unchanged.
+- Confirm `ui.py` has no `tower_defence` import or runtime reference.
