@@ -1,67 +1,53 @@
-import pygame
+"""Standalone Pygame tower-defence game.
+
+Run with: python ui.py
+"""
+
+from enum import Enum, auto
 import math
+from pathlib import Path
 
-from tower_defence import BLACK
+import pygame
 
-pygame.init()
-width = 800
-yellow = (176, 163, 44)
-height = 600
-cell = 40
-screen = pygame.display.set_mode((width, height))
-pygame.display.set_caption("TDR")
-clock = pygame.time.Clock()
-green = (0, 100, 0)
-black = (0, 0, 0)
-fps = 60
-red = (200, 0, 0)
-blue = (0, 0, 200)
-orange = (255, 229, 84)
 
-# ===== Цвета =====
+WIDTH, HEIGHT = 1000, 720
+FPS = 60
+CELL = 40
+UI_BAR_HEIGHT = 120
+PLAYFIELD_HEIGHT = HEIGHT - UI_BAR_HEIGHT
+WALL_WIDTH = 120
+WALL_LEFT = WIDTH - WALL_WIDTH
+GRID_COLS = WIDTH // CELL
+GRID_ROWS = PLAYFIELD_HEIGHT // CELL
+FONT_PATH = Path(__file__).with_name("Minecraft.otf")
+
+# Palette follows td-ui.py for field, path, panel, and tower colors.
 WHITE = (255, 255, 255)
-DARK_GREEN = (30, 100, 30)
-BROWN = (160, 130, 90)
-DARK_BROWN = (120, 90, 60)
-GOLD = (255, 215, 0)
-GRAY = (100, 100, 100)
-CYAN = (0, 200, 200)
-HP_GREEN = (80, 200, 80)
-YELLOW = (255, 255, 0)
-PURPLE = (128, 0, 128)
 BLACK = (0, 0, 0)
-RED = (255, 0, 0)
+INK = BLACK
+PANEL = BLACK
+PANEL_LIGHT = (35, 35, 35)
+FIELD = (0, 100, 0)
+FIELD_DARK = BLACK
+PATH = (176, 163, 44)
+PATH_EDGE = BLACK
+GOLD = (255, 230, 20)
+RED = (200, 0, 0)
+HP_GREEN = (0, 100, 0)
+GREEN = (0, 100, 0)
+GREEN_DARK = (0, 70, 0)
+GREEN_HOVER = (60, 170, 60)
+BLUE = (0, 0, 200)
+ORANGE = (255, 229, 84)
+GRAY = (145, 145, 145)
+DARK_GRAY = (80, 80, 80)
+BRICK_RED = (139, 69, 43)
+DARK_BRICK = (91, 54, 39)
+BRICK_HIGHLIGHT = (171, 91, 54)
+WALL_BASE = (116, 64, 43)
+MORTAR = BLACK
 
-# ===== Цвета для кирпичной стены =====
-BRICK_RED = (139, 69, 19)  # Основной цвет кирпича
-DARK_BRICK = (101, 67, 33)  # Темный кирпич
-MORTAR = (200, 200, 200)  # Цемент между кирпичами
-BRICK_HIGHLIGHT = (160, 82, 45)  # Светлый кирпич для бликов
-# ===== Конец цветов стены =====
-
-tower_types = {
-    "fast": {"name": "fast", "color": blue, "cost": 25, "damage": 10, "fire_rate": 20, "range": 150},
-    "cannon": {"name": "Cannon", "damage": 60, "fire_rate": 75, "range": 120, "color": orange, "cost": 250}
-}
-
-lives = 4
-wave_number = 0
-wave_active = False
-enemies_tospawn = 0
-gold = 10000000000
-spawn_timer = 0
-placing = None
-
-Towers = []
-enemies = []
-Projectiles = []
-
-selected_tower = "fast"
-hover_cell = None
-placing_cell = None
-delete_cell = None
-
-waypoints = [
+WAYPOINTS = [
     (-40, 260),
     (220, 260),
     (220, 100),
@@ -69,579 +55,659 @@ waypoints = [
     (460, 420),
     (700, 420),
     (700, 180),
-    (840, 180),
+    (860, 180),
 ]
 
-road_cells = set()
+TOWER_TYPES = {
+    "rapid": {
+        "name": "Rapid",
+        "damage": 10,
+        "fire_rate": 10,
+        "range": 150,
+        "color": BLUE,
+        "cost": 100,
+    },
+    "cannon": {
+        "name": "Cannon",
+        "damage": 75,
+        "fire_rate": 60,
+        "range": 120,
+        "color": ORANGE,
+        "cost": 200,
+    },
+}
 
-for x in range(0, 6):
-    road_cells.add((x, 6))
+PATH_CELLS = set()
+for (x1, y1), (x2, y2) in zip(WAYPOINTS, WAYPOINTS[1:]):
+    c1, r1 = x1 // CELL, y1 // CELL
+    c2, r2 = x2 // CELL, y2 // CELL
+    for col in range(min(c1, c2), max(c1, c2) + 1):
+        for row in range(min(r1, r2), max(r1, r2) + 1):
+            PATH_CELLS.add((col, row))
 
-for y in range(2, 7):
-    road_cells.add((5, y))
 
-for x in range(5, 12):
-    road_cells.add((x, 2))
+class ScreenState(Enum):
+    MENU = auto()
+    SETTINGS = auto()
+    GAME = auto()
 
-for r in range(2, 11):
-    road_cells.add((11, r))
 
-for c in range(11, 18):
-    road_cells.add((c, 10))
+def clamp(value, low, high):
+    return max(low, min(high, value))
 
-for r in range(4, 11):
-    road_cells.add((17, r))
 
-for c in range(17, 20):
-    road_cells.add((c, 4))
+def minecraft_font(size):
+    if FONT_PATH.exists():
+        return pygame.font.Font(str(FONT_PATH), size)
+    return pygame.font.SysFont("arial", size)
 
-# ===== ДОБАВЛЕНО: Функция для отрисовки кирпичной стены =====
-def draw_brick_wall(screen):
-    """Отрисовка кирпичной стены с эффектом кривизны"""
 
-    # Центр кривизны стены (правая часть экрана)
-    curve_center_x = width + 200  # Центр кривой за экраном
-    curve_center_y = height // 2
-
-    # Параметры стены
-    wall_start_x = width - 80  # Начало стены
-    wall_end_x = width  # Конец стены
-
-    # Рисуем стену по слоям (рядам кирпичей)
-    brick_height = 30
-    brick_width = 50
-    rows = height // brick_height + 2
-
-    for row in range(rows):
-        # Вычисляем Y позицию с учетом кривизны
-        y_offset = (row * brick_height) - brick_height
-
-        # Смещение для эффекта кривизны
-        curve_offset = math.sin(row * 0.1) * 30  # Волнообразная кривизна
-
-        # Смещение кирпичей в ряду (для имитации кирпичной кладки)
-        row_offset = (row % 2) * (brick_width // 2)
-
-        # Рисуем кирпичи в ряду
-        for x_pos in range(-brick_width, wall_end_x - wall_start_x + brick_width, brick_width):
-            brick_x = wall_start_x + x_pos + row_offset + curve_offset
-
-            # Создаем кирпич с эффектом кривизны
-            brick_rect = pygame.Rect(
-                brick_x,
-                y_offset,
-                brick_width - 4,  # Небольшой зазор между кирпичами
-                brick_height - 4
-            )
-
-            # Проверяем, виден ли кирпич
-            if brick_x < width and brick_x + brick_width > wall_start_x:
-                # Основной цвет кирпича с вариациями
-                if (row + int(x_pos // brick_width)) % 3 == 0:
-                    brick_color = BRICK_HIGHLIGHT
-                elif (row + int(x_pos // brick_width)) % 3 == 1:
-                    brick_color = BRICK_RED
-                else:
-                    brick_color = DARK_BRICK
-
-                # Рисуем кирпич
-                pygame.draw.rect(screen, brick_color, brick_rect)
-
-                # Добавляем текстуру кирпича (линии)
-                pygame.draw.line(screen, DARK_BRICK,
-                               (brick_rect.left, brick_rect.centery),
-                               (brick_rect.right, brick_rect.centery), 1)
-
-                # Светлый блик на кирпиче
-                pygame.draw.line(screen, WHITE,
-                               (brick_rect.left + 5, brick_rect.top + 3),
-                               (brick_rect.right - 5, brick_rect.top + 3), 1)
-
-    # Рисуем зубцы на верху стены
-    crenellation_width = 25
-    crenellation_height = 20
-    crenellation_spacing = 50
-
-    for x_pos in range(wall_start_x - 20, width, crenellation_spacing):
-        # Зубец с эффектом кривизны
-        curve_offset = math.sin(x_pos * 0.02) * 15
-        crenellation_x = x_pos + curve_offset
-
-        crenellation_rect = pygame.Rect(
-            crenellation_x,
-            -5,
-            crenellation_width,
-            crenellation_height
-        )
-
-        if crenellation_x < width:
-            pygame.draw.rect(screen, BRICK_RED, crenellation_rect)
-            pygame.draw.rect(screen, DARK_BRICK, crenellation_rect, 2)
-
-    # Добавляем ворота в стене
-    gate_width = 60
-    gate_height = 100
-    gate_x = wall_start_x + 20  # Позиция ворот
-    gate_y = height // 2 - gate_height // 2 + 30
-
-    # Арка ворот
-    gate_rect = pygame.Rect(gate_x, gate_y, gate_width, gate_height)
-    pygame.draw.rect(screen, DARK_BROWN, gate_rect)
-    pygame.draw.rect(screen, BLACK, gate_rect, 3)
-
-    # Арка (полукруг сверху ворот)
-    pygame.draw.arc(screen, BLACK,
-                   (gate_x - 5, gate_y - 30, gate_width + 10, 60),
-                   math.pi, 2 * math.pi, 3)
-
-    # Решетка на воротах
-    for i in range(1, 6):
-        bar_x = gate_x + (gate_width // 6) * i
-        pygame.draw.line(screen, BLACK, (bar_x, gate_y), (bar_x, gate_y + gate_height), 2)
-
-    for i in range(1, 4):
-        bar_y = gate_y + (gate_height // 4) * i
-        pygame.draw.line(screen, BLACK, (gate_x, bar_y), (gate_x + gate_width, bar_y), 2)
-
-    # Добавляем флаги на стену
-    flag_positions = [wall_start_x + 40, wall_start_x + 120, wall_start_x + 200]
-    for flag_x in flag_positions:
-        if flag_x < width:
-            # Древко флага
-            pygame.draw.line(screen, BLACK, (flag_x, 10), (flag_x, -30), 3)
-
-            # Флаг (треугольник)
-            flag_points = [
-                (flag_x, -30),
-                (flag_x + 20, -20),
-                (flag_x, -10)
-            ]
-            pygame.draw.polygon(screen, RED, flag_points)
-            pygame.draw.polygon(screen, GOLD, flag_points, 2)
-
-    # Добавляем тень для создания объема
-    shadow_surface = pygame.Surface((width, height), pygame.SRCALPHA)
-    for i in range(0, 80, 10):
-        alpha = max(0, 50 - i // 2)
-        pygame.draw.rect(shadow_surface, (0, 0, 0, alpha),
-                        (wall_start_x + i, 0, 10, height))
-    screen.blit(shadow_surface, (0, 0))
-# ===== КОНЕЦ ФУНКЦИИ СТЕНЫ =====
-
-def draw_text(surf, font, text, color, x, y, shadow=(0,0,0)):
+def draw_text(surface, font, text, color, position, shadow=BLACK):
+    x, y = position
     if shadow:
-        s = font.render(text, True, shadow)
-        surf.blit(s, (x+1, y+1))
-    t = font.render(text, True, color)
-    surf.blit(t, (x, y))
+        shadow_surface = font.render(text, True, shadow)
+        surface.blit(shadow_surface, (x + 2, y + 2))
+    surface.blit(font.render(text, True, color), (x, y))
 
-def draw_road(screen):
-    for gx, gy in road_cells:
-        rect = pygame.Rect(gx * cell, gy * cell, cell, cell)
-        pygame.draw.rect(screen, yellow, rect)
-        pygame.draw.rect(screen, black, rect, 1)
+
+def draw_centered_text(surface, font, text, color, center, shadow=BLACK):
+    text_surface = font.render(text, True, color)
+    position = (center[0] - text_surface.get_width() // 2, center[1] - text_surface.get_height() // 2)
+    draw_text(surface, font, text, color, position, shadow)
+
+
+def draw_vertical_gradient(surface, top, bottom):
+    height = surface.get_height()
+    for y in range(height):
+        ratio = y / max(1, height - 1)
+        color = tuple(int(top[i] + (bottom[i] - top[i]) * ratio) for i in range(3))
+        pygame.draw.line(surface, color, (0, y), (surface.get_width(), y))
+
+
+def draw_panel(surface, rect, color=PANEL, alpha=225, border=DARK_GRAY, radius=14):
+    panel = pygame.Surface(rect.size, pygame.SRCALPHA)
+    pygame.draw.rect(panel, (*color, alpha), panel.get_rect(), border_radius=radius)
+    if border:
+        pygame.draw.rect(panel, (*border, min(255, alpha + 20)), panel.get_rect(), 1, border_radius=radius)
+    surface.blit(panel, rect.topleft)
+
+
+def draw_play_icon(surface, center, radius, color=WHITE):
+    cx, cy = center
+    points = [
+        (cx - radius // 4, cy - radius // 2),
+        (cx - radius // 4, cy + radius // 2),
+        (cx + radius // 2, cy),
+    ]
+    pygame.draw.polygon(surface, color, points)
+
+
+def draw_gear_icon(surface, center, radius, color=WHITE):
+    cx, cy = center
+    for angle in range(0, 360, 45):
+        radians = math.radians(angle)
+        inner = radius * 0.65
+        outer = radius * 1.05
+        start = (cx + math.cos(radians) * inner, cy + math.sin(radians) * inner)
+        end = (cx + math.cos(radians) * outer, cy + math.sin(radians) * outer)
+        pygame.draw.line(surface, color, start, end, max(3, radius // 4))
+    pygame.draw.circle(surface, color, center, int(radius * 0.68))
+    pygame.draw.circle(surface, PANEL, center, int(radius * 0.3))
+
+
+def build_brick_wall(size):
+    """Build a straight brick wall outside the road and buildable grid."""
+    width, height = size
+    wall = pygame.Surface(size, pygame.SRCALPHA)
+    wall_width = min(WALL_WIDTH, width)
+    left = width - wall_width
+    pygame.draw.rect(wall, WALL_BASE, (left, 0, wall_width, height))
+
+    brick_height = 32
+    brick_width = 64
+    for row, y in enumerate(range(0, height, brick_height)):
+        offset = 0 if row % 2 == 0 else brick_width // 2
+        pygame.draw.line(wall, MORTAR, (left, y), (width, y), 3)
+        for column, x in enumerate(range(left - brick_width + offset, width, brick_width)):
+            brick_left = max(left + 2, x + 2)
+            brick_right = min(width - 2, x + brick_width - 2)
+            if brick_right <= brick_left:
+                continue
+            color = (DARK_BRICK, BRICK_RED, BRICK_HIGHLIGHT)[(row + column) % 3]
+            pygame.draw.rect(wall, color, (brick_left, y + 2, brick_right - brick_left, brick_height - 4))
+            pygame.draw.line(
+                wall,
+                tuple(min(255, channel + 24) for channel in color),
+                (brick_left + 3, y + 4),
+                (brick_right - 3, y + 4),
+                1,
+            )
+        for seam_x in range(left + offset, width, brick_width):
+            pygame.draw.line(wall, MORTAR, (seam_x, y), (seam_x, min(height, y + brick_height)), 3)
+
+    pygame.draw.rect(wall, BLACK, (left, 0, wall_width, height), 2)
+    return wall
+
+
+def draw_field(surface):
+    surface.fill(FIELD)
+    for y in range(0, PLAYFIELD_HEIGHT, CELL):
+        pygame.draw.line(surface, FIELD_DARK, (0, y), (WIDTH, y), 1)
+    for x in range(0, WIDTH + 1, CELL):
+        pygame.draw.line(surface, FIELD_DARK, (x, 0), (x, PLAYFIELD_HEIGHT), 1)
+
+
+def draw_path(surface):
+    for col, row in PATH_CELLS:
+        rect = pygame.Rect(col * CELL, row * CELL, CELL, CELL)
+        pygame.draw.rect(surface, PATH, rect)
+        pygame.draw.rect(surface, PATH_EDGE, rect, 1)
+
+
+def draw_grid_and_path(surface):
+    draw_field(surface)
+    draw_path(surface)
+
+
+class Enemy:
+    def __init__(self, hp, speed, gold):
+        self.max_hp = hp
+        self.hp = hp
+        self.speed = speed
+        self.gold = gold
+        self.waypoint_index = 0
+        self.distance_travelled = 0
+        self.x, self.y = WAYPOINTS[0]
+        self.alive = True
+        self.reached_end = False
+
+    def update(self):
+        if not self.alive or self.reached_end:
+            return
+        target_x, target_y = WAYPOINTS[self.waypoint_index]
+        dx, dy = target_x - self.x, target_y - self.y
+        distance = math.hypot(dx, dy)
+        if distance <= self.speed:
+            self.distance_travelled += distance
+            self.x, self.y = target_x, target_y
+            self.waypoint_index += 1
+            if self.waypoint_index >= len(WAYPOINTS):
+                self.alive = False
+                self.reached_end = True
+        else:
+            self.distance_travelled += self.speed
+            self.x += dx / distance * self.speed
+            self.y += dy / distance * self.speed
+
+    def draw(self, surface):
+        if not self.alive:
+            return
+        center = (int(self.x), int(self.y))
+        pygame.draw.circle(surface, RED, center, 15)
+        pygame.draw.circle(surface, (247, 124, 92), center, 9)
+        bar = pygame.Rect(int(self.x - 12), int(self.y - 25), 24, 4)
+        pygame.draw.rect(surface, BLACK, bar.inflate(2, 2))
+        pygame.draw.rect(surface, HP_GREEN, (bar.x, bar.y, int(bar.width * max(0, self.hp / self.max_hp)), bar.height))
+
 
 class Projectile:
-    def __init__(self, x, y, damage, target, piercing=False, vx=0, vy=0, max_range=None):
-        self.x = x
-        self.y = y
-        self.damage = damage
+    def __init__(self, x, y, target, damage, *, piercing=False, size=3, vx=0, vy=0, color=GOLD, max_range=None):
+        self.x, self.y = x, y
         self.target = target
-        self.speed = 5
+        self.damage = damage
+        self.speed = 6
         self.alive = True
         self.piercing = piercing
-        self.vx = vx
-        self.vy = vy
+        self.size = size
+        self.vx, self.vy = vx, vy
+        self.color = color
+        self.source = (x, y)
         self.max_range = max_range
-        self.src_x = x
-        self.src_y = y
         self.hit_enemies = set()
 
     def update(self, enemies=None):
         if not self.alive:
             return
-        if self.max_range is not None and math.hypot(self.x - self.src_x, self.y - self.src_y) > self.max_range:
+        if self.max_range is not None and math.hypot(self.x - self.source[0], self.y - self.source[1]) > self.max_range:
             self.alive = False
             return
-
         if self.piercing:
             self.x += self.vx * self.speed
             self.y += self.vy * self.speed
-            if enemies:
-                for e in enemies:
-                    if e.alive and id(e) not in self.hit_enemies:
-                        if math.hypot(self.x - e.x, self.y - e.y) < 12:
-                            e.hp -= self.damage
-                            self.hit_enemies.add(id(e))
-                            if e.hp <= 0:
-                                e.alive = False
+            for enemy in enemies or []:
+                if enemy.alive and id(enemy) not in self.hit_enemies and math.hypot(self.x - enemy.x, self.y - enemy.y) < self.size + 8:
+                    enemy.hp -= self.damage
+                    self.hit_enemies.add(id(enemy))
+                    if enemy.hp <= 0:
+                        enemy.alive = False
             return
-
-        if not self.target.alive:
+        if not self.target.alive or self.target.reached_end:
             self.alive = False
             return
-        dx = self.target.x - self.x
-        dy = self.target.y - self.y
-        dist = math.hypot(dx, dy)
-
-        if dist < self.speed:
+        dx, dy = self.target.x - self.x, self.target.y - self.y
+        distance = math.hypot(dx, dy)
+        if distance <= self.speed:
             self.target.hp -= self.damage
             if self.target.hp <= 0:
                 self.target.alive = False
-                global gold
-                gold += self.target.money
             self.alive = False
         else:
-            self.x += dx / dist * self.speed
-            self.y += dy / dist * self.speed
+            self.x += dx / distance * self.speed
+            self.y += dy / distance * self.speed
 
-    def draw(self, screen):
+    def draw(self, surface):
         if self.alive:
-            size = 6 if self.piercing else 4
-            pygame.draw.circle(screen, orange if self.piercing else yellow, (int(self.x), int(self.y)), size)
+            pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.size)
+
 
 class Tower:
-    def __init__(self, x, y, kind):
-        self.x = x
-        self.y = y
-        self.cooldown = 0
+    def __init__(self, col, row, kind):
+        self.col, self.row = col, row
+        self.x = col * CELL + CELL // 2
+        self.y = row * CELL + CELL // 2
         self.kind = kind
-        self.stats = tower_types[kind]
+        self.stats = TOWER_TYPES[kind]
+        self.cooldown = 0
 
     def update(self, enemies):
-        if self.cooldown > 0:
+        if self.cooldown:
             self.cooldown -= 1
             return []
-
-        best_target = None
-        best_dist = self.stats["range"]
-
-        for e in enemies:
-            if not e.alive:
+        in_range = []
+        for enemy in enemies:
+            if not enemy.alive or enemy.reached_end:
                 continue
-            d = math.hypot((self.x * cell + cell // 2) - e.x, (self.y * cell + cell // 2) - e.y)
-            if d < best_dist:
-                best_target = e
-                best_dist = d
-
-        if best_target:
-            self.cooldown = self.stats["fire_rate"]
-            if self.kind == "cannon":
-                result = []
-                for angle_offset in [-0.7, -0.35, 0, 0.35, 0.7]:
-                    dx = best_target.x - (self.x * cell + cell // 2)
-                    dy = best_target.y - (self.y * cell + cell // 2)
-                    dist = math.hypot(dx, dy) or 1
-                    base_angle = math.atan2(dy, dx)
-                    angle = base_angle + angle_offset
-                    result.append(Projectile(
-                        self.x * cell + cell // 2,
-                        self.y * cell + cell // 2,
+            distance = math.hypot(self.x - enemy.x, self.y - enemy.y)
+            if distance < self.stats["range"]:
+                in_range.append(enemy)
+        if not in_range:
+            return []
+        final_section = [
+            enemy for enemy in in_range if enemy.waypoint_index >= len(WAYPOINTS) - 2
+        ]
+        target = max(final_section, key=lambda enemy: enemy.distance_travelled) if final_section else min(
+            in_range, key=lambda enemy: math.hypot(self.x - enemy.x, self.y - enemy.y)
+        )
+        self.cooldown = self.stats["fire_rate"]
+        if self.kind == "cannon":
+            dx, dy = target.x - self.x, target.y - self.y
+            distance = math.hypot(dx, dy) or 1
+            ux, uy = dx / distance, dy / distance
+            projectiles = []
+            for spread in (-0.7, -0.35, 0, 0.35, 0.7):
+                angle = math.atan2(uy, ux) + spread
+                projectiles.append(
+                    Projectile(
+                        self.x,
+                        self.y,
+                        target,
                         self.stats["damage"],
-                        best_target,
                         piercing=True,
+                        size=6,
                         vx=math.cos(angle),
                         vy=math.sin(angle),
-                        max_range=self.stats["range"]
-                    ))
-                return result
+                        color=ORANGE,
+                        max_range=self.stats["range"],
+                    )
+                )
+            return projectiles
+        return [Projectile(self.x, self.y, target, self.stats["damage"], max_range=self.stats["range"])]
 
-            return [Projectile(self.x * cell + cell // 2, self.y * cell + cell // 2, self.stats["damage"], best_target)]
-        return []
-
-    def draw(self, screen, show_range=False):
-        tower = pygame.Rect(self.x * cell + 3, self.y * cell + 3, cell - 6, cell - 6)
-        pygame.draw.rect(screen, self.stats["color"], tower)
+    def draw(self, surface, show_range=False):
+        rect = pygame.Rect(self.col * CELL + 4, self.row * CELL + 4, CELL - 8, CELL - 8)
+        pygame.draw.rect(surface, self.stats["color"], rect, border_radius=7)
+        pygame.draw.rect(surface, INK, rect, 2, border_radius=7)
+        pygame.draw.circle(surface, WHITE, (self.x, self.y), 3)
         if show_range:
-            center_x = self.x * cell + cell // 2
-            center_y = self.y * cell + cell // 2
-            s = pygame.Surface((self.stats["range"] * 2,) * 2, pygame.SRCALPHA)
-            pygame.draw.circle(s, (255, 255, 255, 60), (self.stats["range"],) * 2, self.stats["range"])
-            screen.blit(s, (center_x - self.stats["range"], center_y - self.stats["range"]))
+            range_layer = pygame.Surface((self.stats["range"] * 2,) * 2, pygame.SRCALPHA)
+            pygame.draw.circle(range_layer, (*self.stats["color"], 35), (self.stats["range"],) * 2, self.stats["range"])
+            pygame.draw.circle(range_layer, (*self.stats["color"], 150), (self.stats["range"],) * 2, self.stats["range"], 2)
+            surface.blit(range_layer, (self.x - self.stats["range"], self.y - self.stats["range"]))
 
-class enemy:
-    def __init__(self, speed, hp, money):
-        self.speed = speed
-        self.hp = hp
-        self.money = money
-        self.max_hp = hp
-        self.alive = True
-        self.end = False
-        self.x, self.y = waypoints[0]
-        self.way_point = 0
-        self.radius = cell // 2 - 1
+
+class Game:
+    def __init__(self):
+        self.font = minecraft_font(24)
+        self.small_font = minecraft_font(12)
+        self.big_font = minecraft_font(28)
+        self.reset()
+
+    def reset(self):
+        self.selected = "rapid"
+        self.towers = []
+        self.enemies = []
+        self.projectiles = []
+        self.gold = 300
+        self.lives = 3
+        self.wave = 0
+        self.spawn_q = 0
+        self.spawn_timer = 0
+        self.wave_active = False
+        self.wave_conf = None
+        self.hover_cell = None
+        self.placing_cell = None
+        self.delete_cell = None
+        self.game_over = False
+
+    def start_wave(self):
+        if self.wave_active or self.game_over:
+            return
+        self.wave += 1
+        scale = 1 + (self.wave - 1) * 0.35
+        self.wave_conf = {
+            "count": int(5 * scale),
+            "hp": int(50 * scale),
+            "speed": 1.5 + (self.wave - 1) * 0.05,
+            "gold": int(8 + (self.wave - 1) * 1.5),
+        }
+        self.spawn_q = self.wave_conf["count"]
+        self.spawn_timer = 0
+        self.wave_active = True
 
     def update(self):
-        if not self.alive or self.end:
+        if self.game_over:
             return
-        if self.way_point >= len(waypoints):
-            self.end = True
-            self.alive = False
+        if self.wave_active and self.spawn_q:
+            self.spawn_timer -= 1
+            if self.spawn_timer <= 0:
+                config = self.wave_conf
+                self.enemies.append(Enemy(config["hp"], config["speed"], config["gold"]))
+                self.spawn_q -= 1
+                self.spawn_timer = 25
+
+        for enemy in self.enemies:
+            enemy.update()
+            if enemy.reached_end:
+                self.lives -= 1
+
+        for tower in self.towers:
+            self.projectiles.extend(tower.update(self.enemies))
+        for projectile in self.projectiles:
+            projectile.update(self.enemies if projectile.piercing else None)
+
+        survivors = []
+        for enemy in self.enemies:
+            if enemy.alive and not enemy.reached_end:
+                survivors.append(enemy)
+            elif not enemy.reached_end and enemy.hp <= 0:
+                self.gold += enemy.gold
+        self.enemies = survivors
+        self.projectiles = [projectile for projectile in self.projectiles if projectile.alive]
+
+        if self.wave_active and self.spawn_q == 0 and not self.enemies:
+            self.wave_active = False
+        if self.lives <= 0:
+            self.game_over = True
+
+    def handle_click(self, position, button):
+        if button != 1 or self.game_over:
             return
-
-        new_x, new_y = waypoints[self.way_point]
-        d_x, d_y = new_x - self.x, new_y - self.y
-        dista = math.hypot(d_x, d_y)
-        if dista < self.speed:
-            self.x, self.y = new_x, new_y
-            self.way_point = self.way_point + 1
-            if self.way_point >= len(waypoints):
-                self.end = True
-                self.alive = False
-        else:
-            self.x += d_x / dista * self.speed
-            self.y += d_y / dista * self.speed
-
-    def draw(self, screen):
-        if not self.alive:
+        if not self.wave_active and math.hypot(position[0] - 44, position[1] - 260) <= 26:
+            self.start_wave()
+            self.placing_cell = None
+            self.delete_cell = None
             return
-        pygame.draw.circle(screen, red, (int(self.x), int(self.y)), self.radius)
+        if position[1] >= HEIGHT - UI_BAR_HEIGHT:
+            for index, kind in enumerate(TOWER_TYPES):
+                rect = pygame.Rect(220 + index * 180, HEIGHT - 58, 125, 48)
+                if rect.collidepoint(position):
+                    self.selected = kind
+            self.placing_cell = None
+            self.delete_cell = None
+            return
+        if self.delete_cell:
+            col, row = self.delete_cell
+            center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
+            if math.hypot(position[0] - center[0], position[1] - center[1]) <= 28:
+                self.towers = [tower for tower in self.towers if (tower.col, tower.row) != (col, row)]
+            self.delete_cell = None
+            return
+        if self.placing_cell:
+            col, row = self.placing_cell
+            center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
+            if math.hypot(position[0] - center[0], position[1] - center[1]) <= 52:
+                kind = "cannon" if position[0] < center[0] else "rapid"
+                if self.gold >= TOWER_TYPES[kind]["cost"]:
+                    self.towers.append(Tower(col, row, kind))
+                    self.gold -= TOWER_TYPES[kind]["cost"]
+            self.placing_cell = None
+            return
+        col, row = position[0] // CELL, position[1] // CELL
+        if not (0 <= col < GRID_COLS and 0 <= row < GRID_ROWS):
+            return
+        if position[0] >= WALL_LEFT:
+            return
+        for tower in self.towers:
+            if (tower.col, tower.row) == (col, row):
+                self.delete_cell = (col, row)
+                return
+        if (col, row) not in PATH_CELLS:
+            self.placing_cell = (col, row)
 
-        bar_w, bar_h = 20, 3
-        ratio = max(0, self.hp / self.max_hp)
-        bx = self.x - bar_w // 2
-        by = self.y - 26
-        pygame.draw.rect(screen, black, (bx - 1, by - 1, bar_w + 2, bar_h + 2))
-        pygame.draw.rect(screen, HP_GREEN, (bx, by, bar_w * ratio, bar_h))
+    def draw(self, surface):
+        draw_grid_and_path(surface)
+        surface.blit(build_brick_wall((WIDTH, PLAYFIELD_HEIGHT)), (0, 0))
+        for tower in self.towers:
+            show_range = self.hover_cell == (tower.col, tower.row)
+            tower.draw(surface, show_range)
+        for enemy in self.enemies:
+            enemy.draw(surface)
+        for projectile in self.projectiles:
+            projectile.draw(surface)
+        self._draw_place_menu(surface)
+        self._draw_delete_menu(surface)
+        self._draw_ui(surface)
+        if self.game_over:
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((5, 10, 10, 185))
+            surface.blit(overlay, (0, 0))
+            draw_panel(surface, pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 - 75, 300, 150), PANEL_LIGHT, 245, RED)
+            draw_centered_text(surface, self.big_font, "GAME OVER", RED, (WIDTH // 2, HEIGHT // 2 - 22))
+            draw_centered_text(surface, self.font, "Press R to restart", WHITE, (WIDTH // 2, HEIGHT // 2 + 20))
 
-def start_wave():
-    global wave_active, gold, lives, wave_number, enemies_tospawn, spawn_timer
-    wave_number += 1
-    wave_active = True
-    enemies_tospawn = 5 + wave_number * 3
-    spawn_timer = 30
+    def _draw_ui(self, surface):
+        bar = pygame.Rect(0, HEIGHT - UI_BAR_HEIGHT, WIDTH, UI_BAR_HEIGHT)
+        pygame.draw.rect(surface, BLACK, bar)
+        font = minecraft_font(24)
+        small_font = minecraft_font(10)
+        draw_text(surface, font, f"Gold: {self.gold}", GOLD, (40, HEIGHT - 80), None)
+        draw_text(surface, font, f"Lives: {self.lives}", WHITE, (40, HEIGHT - 40), None)
+        draw_text(surface, font, f"Wave: {self.wave}", WHITE, (220, HEIGHT - 80), None)
 
-def update_wave():
-    global wave_active, enemies_tospawn, spawn_timer
+        for index, (kind, info) in enumerate(TOWER_TYPES.items()):
+            rect = pygame.Rect(400 + index * 180, HEIGHT - 82, 80, 70)
+            pygame.draw.rect(surface, info["color"], rect)
+            border = GOLD if self.selected == kind else WHITE
+            pygame.draw.rect(surface, border, rect, 2)
+            draw_text(surface, small_font, info["name"], BLACK, (rect.x + 5, HEIGHT - 80), None)
+            draw_text(surface, small_font, str(info["cost"]), BLACK, (rect.x + 5, HEIGHT - 40), None)
 
-    if not wave_active:
-        return
+        if not self.wave_active and not self.game_over:
+            center = (44, 260)
+            pygame.draw.circle(surface, GREEN, center, 28)
+            pygame.draw.circle(surface, WHITE, center, 28, 2)
+            draw_play_icon(surface, center, 20)
+            draw_text(surface, small_font, "START", WHITE, (79, 250), None)
 
-    if enemies_tospawn <= 0 and len(enemies) == 0:
-        wave_active = False
-        return
+    def _draw_place_menu(self, surface):
+        if not self.placing_cell:
+            return
+        col, row = self.placing_cell
+        center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
+        radius = 52
+        pygame.draw.circle(surface, PANEL, center, radius)
+        pygame.draw.circle(surface, WHITE, center, radius, 2)
+        pygame.draw.line(surface, WHITE, (center[0], center[1] - radius), (center[0], center[1] + radius), 2)
+        draw_centered_text(surface, self.small_font, "CANNON", WHITE, (center[0] - 24, center[1] - 10), None)
+        draw_centered_text(surface, self.small_font, "RAPID", WHITE, (center[0] + 25, center[1] - 10), None)
 
-    if enemies_tospawn > 0:
-        spawn_timer -= 1
+    def _draw_delete_menu(self, surface):
+        if not self.delete_cell:
+            return
+        col, row = self.delete_cell
+        center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
+        pygame.draw.circle(surface, RED, center, 28)
+        pygame.draw.circle(surface, WHITE, center, 28, 2)
+        draw_centered_text(surface, self.small_font, "DELETE", WHITE, center, None)
 
-        if spawn_timer <= 0:
-            enemies.append(enemy(1.5, 50, 10))
-            enemies_tospawn -= 1
-            spawn_timer = 30
 
-def is_cell_available(gx, gy):
-    if gx < 0 or gx >= width // cell or gy < 0 or gy >= height // cell - 1:
-        return False
-    if (gx, gy) in road_cells:
-        return False
+class App:
+    def __init__(self, screen=None):
+        self.screen = screen or pygame.display.set_mode((WIDTH, HEIGHT))
+        self.clock = pygame.time.Clock()
+        self.state = ScreenState.MENU
+        self.running = True
+        self.volume = 60
+        self.dragging_volume = False
+        self.mouse_pos = (0, 0)
+        self.title_font = minecraft_font(42)
+        self.subtitle_font = minecraft_font(16)
+        self.button_font = minecraft_font(18)
+        self.font = minecraft_font(16)
+        self.play_button = pygame.Rect(WIDTH // 2 - 62, 276, 124, 124)
+        self.settings_button = pygame.Rect(34, HEIGHT // 2 - 32, 64, 64)
+        self.back_button = pygame.Rect(34, 34, 116, 44)
+        self.volume_track = pygame.Rect(160, 280, 480, 8)
+        self.game = Game()
 
-    if gy * cell >= height - 120:
-            return False
-    for i in Towers:
-        if gx == i.x and gy == i.y:
-            return False
-    return True
+    def set_volume(self, value):
+        self.volume = int(clamp(int(value), 0, 100))
 
-def draw_ui():
-    pygame.draw.rect(screen, black, (0, height - 60, width, 60))
+    def set_volume_from_x(self, x):
+        ratio = (x - self.volume_track.left) / self.volume_track.width
+        self.set_volume(round(clamp(ratio, 0, 1) * 100))
 
-    font = pygame.font.Font(None, 24)
-    small_font = pygame.font.Font(None, 20)
-
-    draw_text(screen, font, f"${gold}", GOLD, 10, height - 50)
-    draw_text(screen, font, f"Lives: {lives}", RED if lives < 3 else WHITE, 10, height - 30)
-    draw_text(screen, small_font, "GOLD", GRAY, 10, height - 15)
-    draw_text(screen, small_font, "LIVES", GRAY, 80, height - 15)
-
-    draw_text(screen, font, f"Wave {wave_number}", WHITE, 150, height - 50)
-
-    types = list(tower_types.items())
-    for i, (k, v) in enumerate(types):
-        x = 250 + i * 180
-        pygame.draw.rect(screen, v["color"], (x, height - 52, 80, 44))
-        border = YELLOW if k == selected_tower else WHITE
-        pygame.draw.rect(screen, border, (x, height - 52, 80, 44), 2)
-        draw_text(screen, font, f"{v['name']}", BLACK, x + 5, height - 48)
-        draw_text(screen, font, f"${v['cost']}", BLACK, x + 5, height - 30)
-
-    if not wave_active:
-        sx, sy = 25, 260
-        pygame.draw.circle(screen, red if wave_number > 0 else green, (sx, sy), 20)
-        pygame.draw.circle(screen, WHITE, (sx, sy), 20, 2)
-        pts = [(sx - 6, sy - 8), (sx - 6, sy + 8), (sx + 10, sy)]
-        pygame.draw.polygon(screen, WHITE, pts)
-        draw_text(screen, small_font, "Start", WHITE, sx + 26, sy - 8)
-
-def draw_place_menu():
-    if not placing_cell:
-        return
-
-    gx, gy = placing_cell
-    cx = gx * cell + cell // 2
-    cy = gy * cell + cell // 2
-    rd = 50
-
-    s = pygame.Surface((rd * 2, rd * 2), pygame.SRCALPHA)
-    pygame.draw.circle(s, (40, 40, 40, 220), (rd, rd), rd)
-
-    s2 = pygame.Surface((rd * 2, rd * 2), pygame.SRCALPHA)
-    colors = [info["color"] + (180,) for info in tower_types.values()]
-    s2.set_clip(pygame.Rect(rd, 0, rd, rd * 2))
-    pygame.draw.circle(s2, colors[0], (rd, rd), rd)
-    s2.set_clip(pygame.Rect(0, 0, rd, rd * 2))
-    pygame.draw.circle(s2, colors[1] if len(colors) > 1 else colors[0], (rd, rd), rd)
-
-    screen.blit(s, (cx - rd, cy - rd))
-    screen.blit(s2, (cx - rd, cy - rd))
-    pygame.draw.circle(screen, WHITE, (cx, cy), rd, 2)
-    pygame.draw.line(screen, WHITE, (cx, cy - rd), (cx, cy + rd), 2)
-
-    font = pygame.font.Font(None, 20)
-    for lx, (key, info) in zip((cx + rd * 0.55, cx - rd * 0.55), tower_types.items()):
-        draw_text(screen, font, info["name"], BLACK, lx - font.size(info["name"])[0] // 2, cy - 10)
-        draw_text(screen, font, f"${info['cost']}", BLACK, lx - font.size(f"${info['cost']}")[0] // 2, cy + 4)
-
-def draw_delete_menu():
-    if not delete_cell:
-        return
-
-    gx, gy = delete_cell
-    cx = gx * cell + cell // 2
-    cy = gy * cell + cell // 2
-    rd = 25
-
-    s = pygame.Surface((rd * 2,) * 2, pygame.SRCALPHA)
-    pygame.draw.circle(s, (180, 40, 40, 220), (rd, rd), rd)
-    screen.blit(s, (cx - rd, cy - rd))
-    pygame.draw.circle(screen, WHITE, (cx, cy), rd, 2)
-
-    font = pygame.font.Font(None, 20)
-    draw_text(screen, font, "Delete", WHITE, cx - font.size("Delete")[0] // 2, cy - font.size("Delete")[1] // 2)
-
-running = True
-while running:
-    clock.tick(fps)
-
-    for event in pygame.event.get():
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE:
-                if not wave_active:
-                    start_wave()
-            elif event.key == pygame.K_1:
-                selected_tower = "fast"
-            elif event.key == pygame.K_2 and "cannon" in tower_types:
-                selected_tower = "cannon"
-
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            position = event.pos
-
-            if not wave_active:
-                sx, sy = 25, 260
-                if math.hypot(position[0] - sx, position[1] - sy) <= 20:
-                    start_wave()
-                    placing_cell = None
-                    delete_cell = None
-                    continue
-
-            if position[1] >= height - 60:
-                types = list(tower_types.keys())
-                for i, k in enumerate(types):
-                    x = 250 + i * 180
-                    if x <= position[0] <= x + 80:
-                        selected_tower = k
-                placing_cell = None
-                delete_cell = None
-                continue
-
-            if delete_cell:
-                gx, gy = delete_cell
-                cx = gx * cell + cell // 2
-                cy = gy * cell + cell // 2
-                if math.hypot(position[0] - cx, position[1] - cy) <= 25:
-                    Towers = [t for t in Towers if not (t.x == gx and t.y == gy)]
-                delete_cell = None
-                continue
-
-            if placing_cell:
-                gx, gy = placing_cell
-                cx = gx * cell + cell // 2
-                cy = gy * cell + cell // 2
-                if math.hypot(position[0] - cx, position[1] - cy) <= 50:
-                    kind = list(tower_types.keys())[1] if position[0] - cx < 0 else list(tower_types.keys())[0]
-                    cost = tower_types[kind]["cost"]
-                    if gold >= cost:
-                        Towers.append(Tower(gx, gy, kind))
-                        gold -= cost
-                placing_cell = None
-                continue
-
-            ux = position[0] // cell
-            uy = position[1] // cell
-
-            for t in Towers:
-                if t.x == ux and t.y == uy:
-                    delete_cell = (ux, uy)
-                    break
-            else:
-                if is_cell_available(ux, uy):
-                    placing_cell = (ux, uy)
-
+    def handle_event(self, event):
         if event.type == pygame.QUIT:
-            running = False
-
+            self.running = False
+            return
         if event.type == pygame.MOUSEMOTION:
-            gx, gy = event.pos[0] // cell, event.pos[1] // cell
-            in_grid = 0 <= gx < width // cell and 0 <= gy < height // cell - 1
-            hover_cell = (gx, gy) if in_grid else None
+            self.mouse_pos = event.pos
+            if self.state is ScreenState.SETTINGS and self.dragging_volume:
+                self.set_volume_from_x(event.pos[0])
+            elif self.state is ScreenState.GAME:
+                col, row = event.pos[0] // CELL, event.pos[1] // CELL
+                self.game.hover_cell = (
+                    (col, row)
+                    if 0 <= col < GRID_COLS and 0 <= row < GRID_ROWS and event.pos[0] < WALL_LEFT
+                    else None
+                )
+            return
+        if self.state is ScreenState.MENU:
+            self._handle_menu_event(event)
+        elif self.state is ScreenState.SETTINGS:
+            self._handle_settings_event(event)
+        else:
+            self._handle_game_event(event)
 
-    update_wave()
+    def _handle_menu_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.play_button.collidepoint(event.pos):
+                self.state = ScreenState.GAME
+            elif self.settings_button.collidepoint(event.pos):
+                self.state = ScreenState.SETTINGS
 
-    for tower in Towers:
-        projs = tower.update(enemies)
-        for proj in projs:
-            Projectiles.append(proj)
+    def _handle_settings_event(self, event):
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            self.dragging_volume = False
+            self.state = ScreenState.MENU
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self.dragging_volume = False
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.back_button.collidepoint(event.pos):
+                self.dragging_volume = False
+                self.state = ScreenState.MENU
+            elif self.volume_track.inflate(40, 30).collidepoint(event.pos):
+                self.dragging_volume = True
+                self.set_volume_from_x(event.pos[0])
 
-    for proj in Projectiles:
-        proj.update(enemies if proj.piercing else None)
+    def _handle_game_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.state = ScreenState.MENU
+            elif event.key == pygame.K_SPACE:
+                self.game.start_wave()
+            elif event.key == pygame.K_1:
+                self.game.selected = "rapid"
+            elif event.key == pygame.K_2:
+                self.game.selected = "cannon"
+            elif event.key == pygame.K_r and self.game.game_over:
+                self.game.reset()
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            self.game.handle_click(event.pos, event.button)
 
-    for e in enemies:
-        e.update()
-        if e.end:
-            lives -= 1
-            e.end = False
+    def update(self):
+        if self.state is ScreenState.GAME:
+            self.game.update()
 
-    screen.fill(green)
-    for x in range(0, width, cell):
-        pygame.draw.line(screen, black, (x, 0), (x, height), 1)
-    for y in range(0, height, cell):
-        pygame.draw.line(screen, black, (0, y), (width, y), 1)
+    def draw(self):
+        if self.state is ScreenState.MENU:
+            self._draw_menu()
+        elif self.state is ScreenState.SETTINGS:
+            self._draw_settings()
+        else:
+            self.game.draw(self.screen)
+        display = pygame.display.get_surface()
+        if display is self.screen:
+            pygame.display.flip()
 
-    draw_road(screen=screen)
+    def run(self, max_frames=None):
+        frames = 0
+        while self.running and (max_frames is None or frames < max_frames):
+            self.clock.tick(FPS)
+            for event in pygame.event.get():
+                self.handle_event(event)
+            self.update()
+            self.draw()
+            frames += 1
 
-    # ===== ДОБАВЛЕНО: Отрисовка кирпичной стены =====
-    draw_brick_wall(screen)
-    # ===== КОНЕЦ ДОБАВЛЕНИЯ =====
+    def _draw_menu(self):
+        draw_vertical_gradient(self.screen, (11, 29, 32), (20, 62, 54))
+        pygame.draw.circle(self.screen, (29, 100, 76), (WIDTH - 65, 70), 145, 2)
+        pygame.draw.circle(self.screen, (29, 100, 76), (WIDTH - 65, 70), 105, 1)
+        draw_centered_text(self.screen, self.title_font, "TOWER DEFENCE", WHITE, (WIDTH // 2, 125))
+        draw_centered_text(self.screen, self.subtitle_font, "BUILD  ·  DEFEND  ·  SURVIVE", GRAY, (WIDTH // 2, 170), None)
 
-    for tower in Towers:
-        show_range = hover_cell and tower.x == hover_cell[0] and tower.y == hover_cell[1]
-        tower.draw(screen, show_range)
+        hovered = self.play_button.collidepoint(self.mouse_pos)
+        center = self.play_button.center
+        pygame.draw.circle(self.screen, (4, 12, 12), (center[0] + 6, center[1] + 8), 67)
+        pygame.draw.circle(self.screen, GREEN_HOVER if hovered else GREEN, center, 62)
+        pygame.draw.circle(self.screen, WHITE, center, 62, 2)
+        draw_play_icon(self.screen, center, 34)
+        draw_centered_text(self.screen, self.button_font, "PLAY", WHITE, (center[0], center[1] + 90), None)
 
-    for e in enemies:
-        e.draw(screen)
+        settings_hovered = self.settings_button.collidepoint(self.mouse_pos)
+        pygame.draw.rect(self.screen, GREEN_DARK if settings_hovered else PANEL, self.settings_button, border_radius=14)
+        pygame.draw.rect(self.screen, GREEN if settings_hovered else PANEL_LIGHT, self.settings_button, 2, border_radius=14)
+        draw_gear_icon(self.screen, self.settings_button.center, 20)
+        draw_text(self.screen, self.subtitle_font, "SETTINGS", GRAY, (self.settings_button.right + 14, self.settings_button.centery - 8), None)
+        draw_centered_text(self.screen, self.subtitle_font, "Press the play button to enter the battlefield", GRAY, (WIDTH // 2, HEIGHT - 42), None)
 
-    for proj in Projectiles:
-        proj.draw(screen)
+    def _draw_settings(self):
+        draw_vertical_gradient(self.screen, (11, 29, 32), (20, 62, 54))
+        draw_panel(self.screen, pygame.Rect(90, 90, WIDTH - 180, 400), PANEL, 235, PANEL_LIGHT)
+        draw_text(self.screen, self.title_font, "SETTINGS", WHITE, (140, 135))
+        draw_text(self.screen, self.subtitle_font, "AUDIO", GRAY, (140, 224), None)
+        draw_text(self.screen, self.font, f"MASTER VOLUME   {self.volume}%", WHITE, (140, 248), None)
+        track = self.volume_track
+        pygame.draw.rect(self.screen, DARK_GRAY, track.inflate(0, 10), border_radius=8)
+        pygame.draw.rect(self.screen, GREEN, (track.left, track.top, int(track.width * self.volume / 100), track.height), border_radius=8)
+        knob_x = track.left + int(track.width * self.volume / 100)
+        pygame.draw.circle(self.screen, WHITE, (knob_x, track.centery), 12)
+        pygame.draw.circle(self.screen, GREEN, (knob_x, track.centery), 6)
+        hovered = self.back_button.collidepoint(self.mouse_pos)
+        pygame.draw.rect(self.screen, GREEN_DARK if hovered else PANEL_LIGHT, self.back_button, border_radius=10)
+        pygame.draw.rect(self.screen, GREEN if hovered else GRAY, self.back_button, 1, border_radius=10)
+        draw_text(self.screen, self.font, "‹  BACK", WHITE, (self.back_button.x + 18, self.back_button.y + 12), None)
 
-    draw_place_menu()
-    draw_delete_menu()
-    draw_ui()
 
-    enemies = [e for e in enemies if e.alive]
-    Projectiles = [p for p in Projectiles if p.alive]
+def main():
+    pygame.init()
+    pygame.display.set_caption("Tower Defence")
+    app = App()
+    app.run()
+    pygame.quit()
 
-    if lives <= 0:
-        print("Game Over!")
-        running = False
 
-    pygame.display.flip()
-pygame.quit()
+if __name__ == "__main__":
+    main()
