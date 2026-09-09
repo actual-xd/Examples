@@ -34,9 +34,19 @@ class UiBehaviorTests(unittest.TestCase):
         x, y = app.play_button.center
         event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": (x, y)})
         app.handle_event(event)
+        for _ in range(900):
+            app.update()
         self.assertEqual(app.state, self.ui.ScreenState.GAME)
         self.assertFalse(app.game.wave_active)
         self.assertEqual(app.game.wave, 0)
+
+    def test_start_wave_button_starts_wave_manually(self):
+        app = self.ui.App(screen=self.screen)
+        app.state = self.ui.ScreenState.GAME
+        event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": (44, 260)})
+        app.handle_event(event)
+        self.assertTrue(app.game.wave_active)
+        self.assertEqual(app.game.wave, 1)
 
     def test_volume_is_clamped(self):
         app = self.ui.App(screen=self.screen)
@@ -48,11 +58,22 @@ class UiBehaviorTests(unittest.TestCase):
     def test_brick_wall_surface_has_content(self):
         wall = self.ui.build_brick_wall((self.ui.WIDTH, self.ui.HEIGHT))
         self.assertEqual(wall.get_size(), (self.ui.WIDTH, self.ui.HEIGHT))
+        self.assertEqual(wall.get_flags() & pygame.SRCALPHA, pygame.SRCALPHA)
         self.assertGreater(wall.get_bounding_rect().width, 0)
         self.assertGreater(wall.get_bounding_rect().height, 0)
 
     def test_clamp_handles_middle_value(self):
         self.assertEqual(self.ui.clamp(55, 0, 100), 55)
+
+    def test_run_accepts_frame_limit(self):
+        app = self.ui.App(screen=self.screen)
+        app.run(max_frames=1)
+        self.assertTrue(app.running)
+
+    def test_wall_does_not_hide_right_path(self):
+        app = self.ui.App(screen=self.screen)
+        app.game.draw(self.screen)
+        self.assertEqual(self.screen.get_at((700, 300))[:3], self.ui.PATH)
 
 
 if __name__ == "__main__":
