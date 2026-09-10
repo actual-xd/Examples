@@ -1,8 +1,20 @@
 """Standalone Pygame tower-defence game.
 
 Run with: python ui.py
+
+UI is built per the game-ui-ux skill:
+  - Layout derives every position from anchors/containers over a fixed
+    reference canvas; the canvas is scaled to the window with letterboxing.
+  - Safe-area insets (TV overscan / notch reserve) shrink critical content
+    from the canvas edges.
+  - Every menu screen owns keyboard/gamepad focus with explicit neighbors,
+    an initial focused control, a visible highlight, and mouse coexistence.
+  - Screens live in a push/pop stack (menu / settings / game / pause overlay).
+  - The HUD is event-driven: Game emits gold/lives/wave events and the Hud
+    re-renders cached text only when those events fire.
 """
 
+from collections import deque
 from enum import Enum, auto
 import math
 from pathlib import Path
@@ -20,6 +32,11 @@ WALL_LEFT = WIDTH - WALL_WIDTH
 GRID_COLS = WIDTH // CELL
 GRID_ROWS = PLAYFIELD_HEIGHT // CELL
 FONT_PATH = Path(__file__).with_name("Minecraft.otf")
+
+SCREEN_RECT = pygame.Rect(0, 0, WIDTH, HEIGHT)
+LETTERBOX = (5, 5, 8)
+# 4% of the short edge — desktop stand-in for TV overscan / phone notch reserve.
+SAFE_MARGIN = int(0.04 * min(WIDTH, HEIGHT))
 
 # Palette follows td-ui.py for field, path, panel, and tower colors.
 WHITE = (255, 255, 255)
@@ -90,6 +107,78 @@ class ScreenState(Enum):
     MENU = auto()
     SETTINGS = auto()
     GAME = auto()
+    PAUSE = auto()
+
+
+class Layout:
+    """Anchor-based layout. Every element is positioned relative to a root
+    area via an (x, y) anchor, so no hardcoded screen pixel decides a layout.
+    Containers (hbox/vbox) flow children instead of hand-placing them."""
+
+    @staticmethod
+    def anchor_point(area, anchor, offset=(0, 0)):
+        x_map = {"left": area.left, "center": area.centerx, "right": area.right}
+        y_map = {"top": area.top, "middle": area.centery, "bottom": area.bottom}
+        return (x_map[anchor[0]] + offset[0], y_map[anchor[1]] + offset[1])
+
+    @classmethod
+    def place(cls, area, anchor, width, height, offset=(0, 0)):
+        rect = pygame.Rect(0, 0, width, height)
+        rect.center = cls.anchor_point(area, anchor, offset)
+        return rect
+
+    @staticmethod
+    def hbox(area, widths, height, gap):
+        """Flow children left-to-right inside area, centered as a group."""
+        total = sum(widths) + gap * (len(widths) - 1)
+        x = area.left + (area.width - total) // 2
+        rects = []
+        for width in widths:
+            rects.append(pygame.Rect(x, area.top + (area.height - height) // 2, width, height))
+            x += width + gap
+        return rects
+
+    @staticmethod
+    def vbox(area, count, width, height, gap):
+        """Flow children top-to-bottom inside area, centered as a group."""
+        total = count * height + gap * (count - 1)
+        y = area.top + (area.height - total) // 2
+        rects = []
+        for _ in range(count):
+            rects.append(pygame.Rect(area.left + (area.width - width) // 2, y, width, height))
+            y += height + gap
+        return rects
+
+
+def safe_rect(area, margin=SAFE_MARGIN):
+    """Inset area so critical UI clears notches / rounded corners / overscan."""
+    return area.inflate(-2 * margin, -2 * margin)
+
+
+def letterbox_rect(window_size, reference_size):
+    """Largest rect with the reference aspect ratio that fits in the window."""
+    scale = min(window_size[0] / reference_size[0], window_size[1] / reference_size[1])
+    width = int(reference_size[0] * scale)
+    height = int(reference_size[1] * scale)
+    return pygame.Rect(
+        (window_size[0] - width) // 2, (window_size[1] - height) // 2, width, height
+    )
+
+
+def shop_cards():
+    """Container-derived rects for the tower shop — single source for draw,
+    click, and keyboard selection."""
+    area = Layout.place(SCREEN_RECT, ("center", "bottom"), 200, 70, offset=(0, -12))
+    return list(zip(TOWER_TYPES, Layout.hbox(area, [80, 80], 70, 40)))
+
+
+def settings_panel_rect():
+    """Settings panel anchored inside the safe area (single source for the
+    volume track layout and the panel draw)."""
+    safe = safe_rect(SCREEN_RECT)
+    panel = pygame.Rect(0, 0, safe.width - 80, 400)
+    panel.midtop = Layout.anchor_point(safe, ("center", "top"), (0, 14))
+    return panel
 
 
 def clamp(value, low, high):
@@ -153,6 +242,47 @@ def draw_gear_icon(surface, center, radius, color=WHITE):
         pygame.draw.line(surface, color, start, end, max(3, radius // 4))
     pygame.draw.circle(surface, color, center, int(radius * 0.68))
     pygame.draw.circle(surface, PANEL, center, int(radius * 0.3))
+
+
+def draw_focus_highlight(surface, rect):
+    pygame.draw.rect(surface, GOLD, rect.inflate(14, 14), 4, border_radius=12)
+
+
+class FocusItem:
+    def __init__(self, rect, label, font, action=None):
+        self.rect = rect
+        self.label = label
+        self.action = action or (lambda: None)
+        self.label_surf = font.render(label, True, WHITE)
+
+
+class Focus:
+    """Explicit-neighbor keyboard/gamepad focus. Mouse hover also moves focus
+    so switching device never strands the player."""
+
+    def __init__(self, items, neighbors, initial=0):
+        self.items = items
+        self.neighbors = neighbors
+        self.index = initial
+
+    @property
+    def current(self):
+        return self.items[self.index]
+
+    def move(self, direction):
+        target = self.neighbors.get(self.index, {}).get(direction)
+        if target is not None:
+            self.index = target
+
+    def hover(self, pos):
+        for index, item in enumerate(self.items):
+            if item.rect.collidepoint(pos):
+                self.index = index
+                return True
+        return False
+
+    def activate(self):
+        return self.current.action()
 
 
 def build_brick_wall(size):
@@ -366,11 +496,23 @@ class Tower:
 
 
 class Game:
+    """Gameplay state. HUD-relevant changes are emitted as events instead of
+    being polled by the UI each frame."""
+
     def __init__(self):
         self.font = minecraft_font(24)
         self.small_font = minecraft_font(12)
         self.big_font = minecraft_font(28)
+        self.events = deque()
         self.reset()
+
+    def emit(self, name):
+        self.events.append(name)
+
+    def drain_events(self):
+        events = list(self.events)
+        self.events.clear()
+        return events
 
     def reset(self):
         self.selected = "rapid"
@@ -388,6 +530,8 @@ class Game:
         self.placing_cell = None
         self.delete_cell = None
         self.game_over = False
+        for name in ("gold_changed", "lives_changed", "wave_changed"):
+            self.emit(name)
 
     def start_wave(self):
         if self.wave_active or self.game_over:
@@ -403,6 +547,7 @@ class Game:
         self.spawn_q = self.wave_conf["count"]
         self.spawn_timer = 0
         self.wave_active = True
+        self.emit("wave_changed")
 
     def update(self):
         if self.game_over:
@@ -419,18 +564,23 @@ class Game:
             enemy.update()
             if enemy.reached_end:
                 self.lives -= 1
+                self.emit("lives_changed")
 
         for tower in self.towers:
             self.projectiles.extend(tower.update(self.enemies))
         for projectile in self.projectiles:
             projectile.update(self.enemies if projectile.piercing else None)
 
+        gold_gained = False
         survivors = []
         for enemy in self.enemies:
             if enemy.alive and not enemy.reached_end:
                 survivors.append(enemy)
             elif not enemy.reached_end and enemy.hp <= 0:
                 self.gold += enemy.gold
+                gold_gained = True
+        if gold_gained:
+            self.emit("gold_changed")
         self.enemies = survivors
         self.projectiles = [projectile for projectile in self.projectiles if projectile.alive]
 
@@ -448,8 +598,7 @@ class Game:
             self.delete_cell = None
             return
         if position[1] >= HEIGHT - UI_BAR_HEIGHT:
-            for index, kind in enumerate(TOWER_TYPES):
-                rect = pygame.Rect(220 + index * 180, HEIGHT - 58, 125, 48)
+            for kind, rect in shop_cards():
                 if rect.collidepoint(position):
                     self.selected = kind
             self.placing_cell = None
@@ -470,6 +619,7 @@ class Game:
                 if self.gold >= TOWER_TYPES[kind]["cost"]:
                     self.towers.append(Tower(col, row, kind))
                     self.gold -= TOWER_TYPES[kind]["cost"]
+                    self.emit("gold_changed")
             self.placing_cell = None
             return
         col, row = position[0] // CELL, position[1] // CELL
@@ -496,38 +646,13 @@ class Game:
             projectile.draw(surface)
         self._draw_place_menu(surface)
         self._draw_delete_menu(surface)
-        self._draw_ui(surface)
         if self.game_over:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((5, 10, 10, 185))
             surface.blit(overlay, (0, 0))
             draw_panel(surface, pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 - 75, 300, 150), PANEL_LIGHT, 245, RED)
             draw_centered_text(surface, self.big_font, "GAME OVER", RED, (WIDTH // 2, HEIGHT // 2 - 22))
-            draw_centered_text(surface, self.font, "Press R to restart", WHITE, (WIDTH // 2, HEIGHT // 2 + 20))
-
-    def _draw_ui(self, surface):
-        bar = pygame.Rect(0, HEIGHT - UI_BAR_HEIGHT, WIDTH, UI_BAR_HEIGHT)
-        pygame.draw.rect(surface, BLACK, bar)
-        font = minecraft_font(24)
-        small_font = minecraft_font(10)
-        draw_text(surface, font, f"Gold: {self.gold}", GOLD, (40, HEIGHT - 80), None)
-        draw_text(surface, font, f"Lives: {self.lives}", WHITE, (40, HEIGHT - 40), None)
-        draw_text(surface, font, f"Wave: {self.wave}", WHITE, (220, HEIGHT - 80), None)
-
-        for index, (kind, info) in enumerate(TOWER_TYPES.items()):
-            rect = pygame.Rect(400 + index * 180, HEIGHT - 82, 80, 70)
-            pygame.draw.rect(surface, info["color"], rect)
-            border = GOLD if self.selected == kind else WHITE
-            pygame.draw.rect(surface, border, rect, 2)
-            draw_text(surface, small_font, info["name"], BLACK, (rect.x + 5, HEIGHT - 80), None)
-            draw_text(surface, small_font, str(info["cost"]), BLACK, (rect.x + 5, HEIGHT - 40), None)
-
-        if not self.wave_active and not self.game_over:
-            center = (44, 260)
-            pygame.draw.circle(surface, GREEN, center, 28)
-            pygame.draw.circle(surface, WHITE, center, 28, 2)
-            draw_play_icon(surface, center, 20)
-            draw_text(surface, small_font, "START", WHITE, (79, 250), None)
+            draw_centered_text(surface, self.font, "Press R or Enter to restart", WHITE, (WIDTH // 2, HEIGHT // 2 + 20))
 
     def _draw_place_menu(self, surface):
         if not self.placing_cell:
@@ -551,24 +676,137 @@ class Game:
         draw_centered_text(surface, self.small_font, "DELETE", WHITE, center, None)
 
 
+class Hud:
+    """Event-driven HUD. Text surfaces are rendered once and re-rendered only
+    when Game emits gold/lives/wave events."""
+
+    def __init__(self, font, small_font):
+        self.font = font
+        self.small_font = small_font
+        self.gold_surf = None
+        self.lives_surf = None
+        self.wave_surf = None
+        self.start_surf = small_font.render("START", True, WHITE)
+        self.gold_pos = Layout.anchor_point(SCREEN_RECT, ("left", "bottom"), (SAFE_MARGIN, -80))
+        self.lives_pos = Layout.anchor_point(SCREEN_RECT, ("left", "bottom"), (SAFE_MARGIN, -40))
+        self.wave_pos = Layout.anchor_point(SCREEN_RECT, ("left", "bottom"), (220, -80))
+        self.cards = {kind: self._make_card(kind, info) for kind, info in TOWER_TYPES.items()}
+
+    def _make_card(self, kind, info):
+        card = pygame.Surface((80, 70))
+        card.fill(info["color"])
+        card.blit(self.small_font.render(info["name"], True, BLACK), (6, 6))
+        card.blit(self.small_font.render(str(info["cost"]), True, BLACK), (6, 44))
+        return card
+
+    def handle(self, events, gold, lives, wave):
+        for name in events:
+            if name == "gold_changed":
+                self.gold_surf = self.font.render(f"Gold: {gold}", True, GOLD)
+            elif name == "lives_changed":
+                self.lives_surf = self.font.render(f"Lives: {lives}", True, WHITE)
+            elif name == "wave_changed":
+                self.wave_surf = self.font.render(f"Wave: {wave}", True, WHITE)
+
+    def draw(self, surface, selected):
+        if self.gold_surf:
+            surface.blit(self.gold_surf, self.gold_pos)
+        if self.lives_surf:
+            surface.blit(self.lives_surf, self.lives_pos)
+        if self.wave_surf:
+            surface.blit(self.wave_surf, self.wave_pos)
+        for kind, rect in shop_cards():
+            surface.blit(self.cards[kind], rect)
+            border = GOLD if kind == selected else WHITE
+            pygame.draw.rect(surface, border, rect, 2)
+
+
 class App:
     def __init__(self, screen=None):
-        self.screen = screen or pygame.display.set_mode((WIDTH, HEIGHT))
+        self.canvas = pygame.Surface((WIDTH, HEIGHT))
+        self.screen = screen
+        if screen is None:
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
-        self.state = ScreenState.MENU
         self.running = True
         self.volume = 60
         self.dragging_volume = False
         self.mouse_pos = (0, 0)
+
         self.title_font = minecraft_font(42)
         self.subtitle_font = minecraft_font(16)
         self.button_font = minecraft_font(18)
         self.font = minecraft_font(16)
-        self.play_button = pygame.Rect(WIDTH // 2 - 62, 276, 124, 124)
-        self.settings_button = pygame.Rect(34, HEIGHT // 2 - 32, 64, 64)
-        self.back_button = pygame.Rect(34, 34, 116, 44)
-        self.volume_track = pygame.Rect(160, 280, 480, 8)
+        self.hud = Hud(minecraft_font(24), minecraft_font(10))
+
+        # Layout-derived control rects (anchored, not hardcoded).
+        self.play_button = Layout.place(SCREEN_RECT, ("center", "middle"), 124, 124, offset=(0, -84))
+        self.settings_button = Layout.place(SCREEN_RECT, ("left", "middle"), 64, 64, offset=(64, 0))
+        self.back_button = pygame.Rect(
+            *Layout.anchor_point(SCREEN_RECT, ("left", "top"), (58, 22)), 116, 44
+        )
+        self.volume_track = Layout.place(settings_panel_rect(), ("center", "top"), 480, 8, offset=(0, 182))
+        self.pause_items = Layout.vbox(SCREEN_RECT, 3, 260, 52, 16)
+
+        # Screens as a stack: push (pause over game), pop (resume).
+        self.screens = [ScreenState.MENU]
+        self.focus = None
+        self._rebuild_focus()
+
         self.game = Game()
+
+    # --- screen stack ------------------------------------------------------
+
+    @property
+    def state(self):
+        return self.screens[-1]
+
+    @state.setter
+    def state(self, screen):
+        self.screens = [screen]
+        self._rebuild_focus()
+
+    def push(self, screen):
+        self.screens.append(screen)
+        self._rebuild_focus()
+
+    def pop(self):
+        if len(self.screens) > 1:
+            self.screens.pop()
+        self._rebuild_focus()
+
+    def switch(self, screen):
+        self.screens = [screen]
+        self._rebuild_focus()
+
+    def _rebuild_focus(self):
+        """Give every screen an initial focused control; define neighbors."""
+        item_font = self.button_font
+        if self.state is ScreenState.MENU:
+            items = [
+                FocusItem(self.play_button, "PLAY", item_font, lambda: self.push(ScreenState.GAME)),
+                FocusItem(self.settings_button, "SETTINGS", item_font, lambda: self.push(ScreenState.SETTINGS)),
+            ]
+            self.focus = Focus(items, {0: {"down": 1, "right": 1}, 1: {"up": 0, "left": 0}})
+        elif self.state is ScreenState.SETTINGS:
+            track_hit = self.volume_track.inflate(40, 30)
+            items = [
+                FocusItem(track_hit, "VOLUME", item_font),
+                FocusItem(self.back_button, "BACK", item_font, lambda: self.pop()),
+            ]
+            self.focus = Focus(items, {0: {"down": 1, "right": 1}, 1: {"up": 0, "left": 0}})
+        elif self.state is ScreenState.PAUSE:
+            resume, settings, menu = self.pause_items
+            items = [
+                FocusItem(resume, "RESUME", item_font, lambda: self.pop()),
+                FocusItem(settings, "SETTINGS", item_font, lambda: self.push(ScreenState.SETTINGS)),
+                FocusItem(menu, "MAIN MENU", item_font, lambda: self.switch(ScreenState.MENU)),
+            ]
+            self.focus = Focus(items, {0: {"down": 1}, 1: {"up": 0, "down": 2}, 2: {"up": 1}})
+        else:
+            self.focus = None
+
+    # --- input -------------------------------------------------------------
 
     def set_volume(self, value):
         self.volume = int(clamp(int(value), 0, 100))
@@ -577,19 +815,40 @@ class App:
         ratio = (x - self.volume_track.left) / self.volume_track.width
         self.set_volume(round(clamp(ratio, 0, 1) * 100))
 
+    @staticmethod
+    def _is_activate(key):
+        return key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE, pygame.K_j)
+
+    def _to_virtual(self, pos):
+        window = pygame.display.get_surface()
+        if window is None:
+            return pos
+        window_size = window.get_size()
+        if window_size == (WIDTH, HEIGHT):
+            return pos
+        dst = letterbox_rect(window_size, (WIDTH, HEIGHT))
+        scale = dst.width / WIDTH
+        return ((pos[0] - dst.x) / scale, (pos[1] - dst.y) / scale)
+
     def handle_event(self, event):
         if event.type == pygame.QUIT:
             self.running = False
             return
+        if event.type == pygame.VIDEORESIZE:
+            if pygame.display.get_surface() is self.screen and self.screen is not None:
+                self.screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
+            return
         if event.type == pygame.MOUSEMOTION:
-            self.mouse_pos = event.pos
+            self.mouse_pos = self._to_virtual(event.pos)
             if self.state is ScreenState.SETTINGS and self.dragging_volume:
-                self.set_volume_from_x(event.pos[0])
+                self.set_volume_from_x(self.mouse_pos[0])
+            elif self.focus is not None:
+                self.focus.hover(self.mouse_pos)
             elif self.state is ScreenState.GAME:
-                col, row = event.pos[0] // CELL, event.pos[1] // CELL
+                col, row = self.mouse_pos[0] // CELL, self.mouse_pos[1] // CELL
                 self.game.hover_cell = (
                     (col, row)
-                    if 0 <= col < GRID_COLS and 0 <= row < GRID_ROWS and event.pos[0] < WALL_LEFT
+                    if 0 <= col < GRID_COLS and 0 <= row < GRID_ROWS and self.mouse_pos[0] < WALL_LEFT
                     else None
                 )
             return
@@ -597,44 +856,93 @@ class App:
             self._handle_menu_event(event)
         elif self.state is ScreenState.SETTINGS:
             self._handle_settings_event(event)
+        elif self.state is ScreenState.PAUSE:
+            self._handle_pause_event(event)
         else:
             self._handle_game_event(event)
 
     def _handle_menu_event(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.play_button.collidepoint(event.pos):
-                self.state = ScreenState.GAME
-            elif self.settings_button.collidepoint(event.pos):
-                self.state = ScreenState.SETTINGS
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_UP, pygame.K_w):
+                self.focus.move("up")
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                self.focus.move("down")
+            elif event.key in (pygame.K_LEFT, pygame.K_a):
+                self.focus.move("left")
+            elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                self.focus.move("right")
+            elif self._is_activate(event.key):
+                self.focus.activate()
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            pos = self._to_virtual(event.pos)
+            self.focus.hover(pos)
+            if self.play_button.collidepoint(pos):
+                self.push(ScreenState.GAME)
+            elif self.settings_button.collidepoint(pos):
+                self.push(ScreenState.SETTINGS)
 
     def _handle_settings_event(self, event):
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            self.dragging_volume = False
-            self.state = ScreenState.MENU
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                self.dragging_volume = False
+                self.pop()
+            elif self.focus.index == 0 and event.key in (pygame.K_LEFT, pygame.K_a):
+                self.set_volume(self.volume - 5)
+            elif self.focus.index == 0 and event.key in (pygame.K_RIGHT, pygame.K_d):
+                self.set_volume(self.volume + 5)
+            elif event.key in (pygame.K_UP, pygame.K_w, pygame.K_DOWN, pygame.K_s, pygame.K_LEFT, pygame.K_a, pygame.K_RIGHT, pygame.K_d):
+                self.focus.move("up" if event.key in (pygame.K_UP, pygame.K_w) else
+                                "down" if event.key in (pygame.K_DOWN, pygame.K_s) else
+                                "left" if event.key in (pygame.K_LEFT, pygame.K_a) else "right")
+            elif self._is_activate(event.key):
+                self.focus.activate()
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging_volume = False
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.back_button.collidepoint(event.pos):
+            pos = self._to_virtual(event.pos)
+            self.focus.hover(pos)
+            if self.back_button.collidepoint(pos):
                 self.dragging_volume = False
-                self.state = ScreenState.MENU
-            elif self.volume_track.inflate(40, 30).collidepoint(event.pos):
+                self.pop()
+            elif self.volume_track.inflate(40, 30).collidepoint(pos):
                 self.dragging_volume = True
-                self.set_volume_from_x(event.pos[0])
+                self.set_volume_from_x(pos[0])
+
+    def _handle_pause_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                self.pop()
+            elif event.key in (pygame.K_UP, pygame.K_w):
+                self.focus.move("up")
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                self.focus.move("down")
+            elif self._is_activate(event.key):
+                self.focus.activate()
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            pos = self._to_virtual(event.pos)
+            self.focus.hover(pos)
+            if any(item.rect.collidepoint(pos) for item in self.focus.items):
+                self.focus.activate()
 
     def _handle_game_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                self.state = ScreenState.MENU
+                if self.game.game_over:
+                    self.switch(ScreenState.MENU)
+                else:
+                    self.push(ScreenState.PAUSE)
             elif event.key == pygame.K_SPACE:
                 self.game.start_wave()
             elif event.key == pygame.K_1:
                 self.game.selected = "rapid"
             elif event.key == pygame.K_2:
                 self.game.selected = "cannon"
-            elif event.key == pygame.K_r and self.game.game_over:
+            elif event.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER) and self.game.game_over:
                 self.game.reset()
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            self.game.handle_click(event.pos, event.button)
+            self.game.handle_click(self._to_virtual(event.pos), event.button)
+
+    # --- update / draw -----------------------------------------------------
 
     def update(self):
         if self.state is ScreenState.GAME:
@@ -642,13 +950,28 @@ class App:
 
     def draw(self):
         if self.state is ScreenState.MENU:
-            self._draw_menu()
+            self._draw_menu(self.canvas)
         elif self.state is ScreenState.SETTINGS:
-            self._draw_settings()
+            self._draw_settings(self.canvas)
         else:
-            self.game.draw(self.screen)
-        display = pygame.display.get_surface()
-        if display is self.screen:
+            self.game.draw(self.canvas)
+            self._draw_game_ui(self.canvas)
+            if self.state is ScreenState.PAUSE:
+                self._draw_pause(self.canvas)
+        self._present()
+
+    def _present(self):
+        window = pygame.display.get_surface()
+        if window is None:
+            self.screen.blit(self.canvas, (0, 0))
+            return
+        if window.get_size() == (WIDTH, HEIGHT):
+            window.blit(self.canvas, (0, 0))
+        else:
+            window.fill(LETTERBOX)
+            dst = letterbox_rect(window.get_size(), (WIDTH, HEIGHT))
+            window.blit(pygame.transform.smoothscale(self.canvas, dst.size), dst)
+        if window is self.screen:
             pygame.display.flip()
 
     def run(self, max_frames=None):
@@ -661,44 +984,86 @@ class App:
             self.draw()
             frames += 1
 
-    def _draw_menu(self):
-        draw_vertical_gradient(self.screen, (11, 29, 32), (20, 62, 54))
-        pygame.draw.circle(self.screen, (29, 100, 76), (WIDTH - 65, 70), 145, 2)
-        pygame.draw.circle(self.screen, (29, 100, 76), (WIDTH - 65, 70), 105, 1)
-        draw_centered_text(self.screen, self.title_font, "TOWER DEFENCE", WHITE, (WIDTH // 2, 125))
-        draw_centered_text(self.screen, self.subtitle_font, "BUILD  ·  DEFEND  ·  SURVIVE", GRAY, (WIDTH // 2, 170), None)
+    # --- screens -----------------------------------------------------------
 
-        hovered = self.play_button.collidepoint(self.mouse_pos)
+    def _draw_menu(self, surface):
+        safe = safe_rect(SCREEN_RECT)
+        draw_vertical_gradient(surface, (11, 29, 32), (20, 62, 54))
+        circle_center = Layout.anchor_point(safe, ("right", "top"), (-65, 70))
+        pygame.draw.circle(surface, (29, 100, 76), circle_center, 145, 2)
+        pygame.draw.circle(surface, (29, 100, 76), circle_center, 105, 1)
+        draw_centered_text(surface, self.title_font, "TOWER DEFENCE", WHITE, Layout.anchor_point(safe, ("center", "top"), (0, 97)))
+        draw_centered_text(surface, self.subtitle_font, "BUILD  ·  DEFEND  ·  SURVIVE", GRAY, Layout.anchor_point(safe, ("center", "top"), (0, 142)), None)
+
+        focused_play = self.focus.current is self.focus.items[0]
         center = self.play_button.center
-        pygame.draw.circle(self.screen, (4, 12, 12), (center[0] + 6, center[1] + 8), 67)
-        pygame.draw.circle(self.screen, GREEN_HOVER if hovered else GREEN, center, 62)
-        pygame.draw.circle(self.screen, WHITE, center, 62, 2)
-        draw_play_icon(self.screen, center, 34)
-        draw_centered_text(self.screen, self.button_font, "PLAY", WHITE, (center[0], center[1] + 90), None)
+        if focused_play:
+            pygame.draw.circle(surface, GOLD, center, 66, 4)
+        pygame.draw.circle(surface, (4, 12, 12), (center[0] + 6, center[1] + 8), 67)
+        pygame.draw.circle(surface, GREEN_HOVER if self.play_button.collidepoint(self.mouse_pos) else GREEN, center, 62)
+        pygame.draw.circle(surface, WHITE, center, 62, 2)
+        draw_play_icon(surface, center, 34)
+        draw_centered_text(surface, self.button_font, "PLAY", WHITE, (center[0], center[1] + 90), None)
 
         settings_hovered = self.settings_button.collidepoint(self.mouse_pos)
-        pygame.draw.rect(self.screen, GREEN_DARK if settings_hovered else PANEL, self.settings_button, border_radius=14)
-        pygame.draw.rect(self.screen, GREEN if settings_hovered else PANEL_LIGHT, self.settings_button, 2, border_radius=14)
-        draw_gear_icon(self.screen, self.settings_button.center, 20)
-        draw_text(self.screen, self.subtitle_font, "SETTINGS", GRAY, (self.settings_button.right + 14, self.settings_button.centery - 8), None)
-        draw_centered_text(self.screen, self.subtitle_font, "Press the play button to enter the battlefield", GRAY, (WIDTH // 2, HEIGHT - 42), None)
+        if self.focus.current is self.focus.items[1]:
+            draw_focus_highlight(surface, self.settings_button)
+        pygame.draw.rect(surface, GREEN_DARK if settings_hovered else PANEL, self.settings_button, border_radius=14)
+        pygame.draw.rect(surface, GREEN if settings_hovered else PANEL_LIGHT, self.settings_button, 2, border_radius=14)
+        draw_gear_icon(surface, self.settings_button.center, 20)
+        draw_text(surface, self.subtitle_font, "SETTINGS", GRAY, (self.settings_button.right + 14, self.settings_button.centery - 8), None)
+        draw_centered_text(surface, self.subtitle_font, "Press the play button to enter the battlefield", GRAY, Layout.anchor_point(safe, ("center", "bottom"), (0, -42)), None)
 
-    def _draw_settings(self):
-        draw_vertical_gradient(self.screen, (11, 29, 32), (20, 62, 54))
-        draw_panel(self.screen, pygame.Rect(90, 90, WIDTH - 180, 400), PANEL, 235, PANEL_LIGHT)
-        draw_text(self.screen, self.title_font, "SETTINGS", WHITE, (140, 135))
-        draw_text(self.screen, self.subtitle_font, "AUDIO", GRAY, (140, 224), None)
-        draw_text(self.screen, self.font, f"MASTER VOLUME   {self.volume}%", WHITE, (140, 248), None)
+    def _draw_settings(self, surface):
+        safe = safe_rect(SCREEN_RECT)
+        draw_vertical_gradient(surface, (11, 29, 32), (20, 62, 54))
+        panel = settings_panel_rect()
+        draw_panel(surface, panel, PANEL, 235, PANEL_LIGHT)
+        draw_text(surface, self.title_font, "SETTINGS", WHITE, Layout.anchor_point(panel, ("left", "top"), (32, 40)))
+        draw_text(surface, self.subtitle_font, "AUDIO", GRAY, Layout.anchor_point(panel, ("left", "top"), (32, 130)), None)
+        draw_text(surface, self.font, f"MASTER VOLUME   {self.volume}%", WHITE, Layout.anchor_point(panel, ("left", "top"), (32, 154)), None)
         track = self.volume_track
-        pygame.draw.rect(self.screen, DARK_GRAY, track.inflate(0, 10), border_radius=8)
-        pygame.draw.rect(self.screen, GREEN, (track.left, track.top, int(track.width * self.volume / 100), track.height), border_radius=8)
+        if self.focus.current is self.focus.items[0]:
+            draw_focus_highlight(surface, track.inflate(40, 30))
+        pygame.draw.rect(surface, DARK_GRAY, track.inflate(0, 10), border_radius=8)
+        pygame.draw.rect(surface, GREEN, (track.left, track.top, int(track.width * self.volume / 100), track.height), border_radius=8)
         knob_x = track.left + int(track.width * self.volume / 100)
-        pygame.draw.circle(self.screen, WHITE, (knob_x, track.centery), 12)
-        pygame.draw.circle(self.screen, GREEN, (knob_x, track.centery), 6)
+        pygame.draw.circle(surface, WHITE, (knob_x, track.centery), 12)
+        pygame.draw.circle(surface, GREEN, (knob_x, track.centery), 6)
+        if self.focus.current is self.focus.items[1]:
+            draw_focus_highlight(surface, self.back_button)
         hovered = self.back_button.collidepoint(self.mouse_pos)
-        pygame.draw.rect(self.screen, GREEN_DARK if hovered else PANEL_LIGHT, self.back_button, border_radius=10)
-        pygame.draw.rect(self.screen, GREEN if hovered else GRAY, self.back_button, 1, border_radius=10)
-        draw_text(self.screen, self.font, "‹  BACK", WHITE, (self.back_button.x + 18, self.back_button.y + 12), None)
+        pygame.draw.rect(surface, GREEN_DARK if hovered else PANEL_LIGHT, self.back_button, border_radius=10)
+        pygame.draw.rect(surface, GREEN if hovered else GRAY, self.back_button, 1, border_radius=10)
+        draw_text(surface, self.font, "‹  BACK", WHITE, (self.back_button.x + 18, self.back_button.y + 12), None)
+        draw_centered_text(surface, self.subtitle_font, "← → adjust · ↑ ↓ move · Enter select · Esc back", GRAY, Layout.anchor_point(safe, ("center", "bottom"), (0, -24)), None)
+
+    def _draw_pause(self, surface):
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((5, 10, 10, 160))
+        surface.blit(overlay, (0, 0))
+        panel = Layout.place(SCREEN_RECT, ("center", "middle"), 340, 220)
+        draw_panel(surface, panel, PANEL_LIGHT, 245, GOLD)
+        draw_centered_text(surface, self.title_font, "PAUSED", WHITE, (WIDTH // 2, panel.top + 40))
+        for item in self.focus.items:
+            if item is self.focus.current:
+                draw_focus_highlight(surface, item.rect)
+            pygame.draw.rect(surface, PANEL, item.rect, border_radius=8)
+            pygame.draw.rect(surface, GRAY, item.rect, 1, border_radius=8)
+            label_pos = (item.rect.centerx - item.label_surf.get_width() // 2, item.rect.centery - item.label_surf.get_height() // 2)
+            surface.blit(item.label_surf, label_pos)
+
+    def _draw_game_ui(self, surface):
+        bar = pygame.Rect(0, HEIGHT - UI_BAR_HEIGHT, WIDTH, UI_BAR_HEIGHT)
+        pygame.draw.rect(surface, BLACK, bar)
+        self.hud.handle(self.game.drain_events(), self.game.gold, self.game.lives, self.game.wave)
+        self.hud.draw(surface, self.game.selected)
+        if not self.game.wave_active and not self.game.game_over:
+            center = (44, 260)
+            pygame.draw.circle(surface, GREEN, center, 28)
+            pygame.draw.circle(surface, WHITE, center, 28, 2)
+            draw_play_icon(surface, center, 20)
+            surface.blit(self.hud.start_surf, (79, 250))
 
 
 def main():
