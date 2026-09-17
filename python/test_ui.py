@@ -89,7 +89,21 @@ class UiBehaviorTests(unittest.TestCase):
     def test_wall_cells_are_not_buildable(self):
         game = self.ui.Game()
         game.handle_click((self.ui.WALL_LEFT + 10, 100), 1)
-        self.assertIsNone(game.placing_cell)
+        self.assertEqual(game.towers, [])
+
+    def test_selected_tower_is_built_by_clicking_a_free_cell(self):
+        game = self.ui.Game()
+        cards = dict(self.ui.shop_cards())
+        game.handle_click(cards["cannon"].center, 1)
+        self.assertEqual(game.selected, "cannon")
+        game.handle_click((self.ui.CELL // 2, self.ui.CELL // 2), 1)
+        self.assertEqual([tower.kind for tower in game.towers], ["cannon"])
+        self.assertEqual(game.gold, 100)
+
+    def test_path_cells_are_not_buildable(self):
+        game = self.ui.Game()
+        game.handle_click((self.ui.WAYPOINTS[1][0], self.ui.WAYPOINTS[1][1]), 1)
+        self.assertEqual(game.towers, [])
 
     def test_clamp_handles_middle_value(self):
         self.assertEqual(self.ui.clamp(55, 0, 100), 55)
@@ -180,6 +194,11 @@ class UiUxSkillTests(unittest.TestCase):
         for rect in card_rects:
             # cards live inside the bottom UI bar
             self.assertGreaterEqual(rect.top, ui.HEIGHT - ui.UI_BAR_HEIGHT)
+            self.assertLessEqual(rect.bottom, ui.HEIGHT)
+        # the card fill surface matches the frame rect size
+        hud = ui.Hud(ui.minecraft_font(24), ui.minecraft_font(10))
+        for kind, rect in cards.items():
+            self.assertEqual(hud.cards[kind].get_size(), rect.size)
         # clicking the drawn card center selects that tower
         game = ui.Game()
         game.handle_click(cards["cannon"].center, 1)
@@ -384,6 +403,23 @@ class UiUxSkillTests(unittest.TestCase):
         app.hud.handle(["wave_changed"], 0, 0, 5)
         self.assertIsNot(app.hud.wave_surf, wave_before)
         self.assertIs(app.hud.gold_surf, gold_before)
+
+    def test_shop_card_border_is_white_only_when_selected(self):
+        ui = self.ui
+        hud = ui.Hud(ui.minecraft_font(24), ui.minecraft_font(10))
+        surface = pygame.Surface((ui.WIDTH, ui.HEIGHT))
+        hud.draw(surface, "cannon")
+        cards = dict(ui.shop_cards())
+        inset = (1, 1)
+        # selected card: white outline
+        selected = cards["cannon"]
+        self.assertEqual(surface.get_at((selected.left + inset[0], selected.top + inset[1]))[:3], ui.WHITE)
+        # inactive card: outline blends into its own fill
+        inactive = cards["rapid"]
+        self.assertEqual(
+            surface.get_at((inactive.left + inset[0], inactive.top + inset[1]))[:3],
+            ui.TOWER_TYPES["rapid"]["color"],
+        )
 
     # --- resize / presentation ---
 
