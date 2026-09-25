@@ -514,6 +514,7 @@ class Game:
         self.hover_cell = None
         self.delete_cell = None
         self.game_over = False
+        self.pending_cell = None
         for name in ("gold_changed", "lives_changed", "wave_changed"):
             self.emit(name)
 
