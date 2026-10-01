@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import os
 import unittest
 from pathlib import Path
@@ -91,14 +92,173 @@ class UiBehaviorTests(unittest.TestCase):
         game.handle_click((self.ui.WALL_LEFT + 10, 100), 1)
         self.assertEqual(game.towers, [])
 
-    def test_selected_tower_is_built_by_clicking_a_free_cell(self):
+    def test_selected_tower_needs_preview_then_confirmation(self):
         game = self.ui.Game()
         cards = dict(self.ui.shop_cards())
         game.handle_click(cards["cannon"].center, 1)
-        self.assertEqual(game.selected, "cannon")
-        game.handle_click((self.ui.CELL // 2, self.ui.CELL // 2), 1)
+        cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
+
+        game.handle_click(cell_pos, 1)
+
+        self.assertEqual(game.pending_cell, (0, 0))
+        self.assertEqual(game.towers, [])
+        self.assertEqual(game.gold, 300)
+
+        game.handle_click(cell_pos, 1)
+
         self.assertEqual([tower.kind for tower in game.towers], ["cannon"])
         self.assertEqual(game.gold, 100)
+        self.assertIsNone(game.pending_cell)
+
+    def test_clicking_another_cell_moves_preview(self):
+        game = self.ui.Game()
+        first = (self.ui.CELL // 2, self.ui.CELL // 2)
+        second = (self.ui.CELL + self.ui.CELL // 2, self.ui.CELL // 2)
+
+        game.handle_click(first, 1)
+        game.handle_click(second, 1)
+
+        self.assertEqual(game.pending_cell, (1, 0))
+        self.assertEqual(game.towers, [])
+
+        game.handle_click(second, 1)
+
+        self.assertEqual([(tower.col, tower.row) for tower in game.towers], [(1, 0)])
+
+    def test_type_change_updates_pending_purchase(self):
+        game = self.ui.Game()
+        cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
+        game.handle_click(cell_pos, 1)
+
+        game.handle_click(dict(self.ui.shop_cards())["cannon"].center, 1)
+        game.handle_click(cell_pos, 1)
+
+        self.assertEqual(game.towers[0].kind, "cannon")
+        self.assertEqual(game.gold, 100)
+
+    def test_current_price_is_checked_on_confirmation(self):
+        game = self.ui.Game()
+        cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
+        game.handle_click(cell_pos, 1)
+        game.gold = 150
+
+        game.handle_click(dict(self.ui.shop_cards())["cannon"].center, 1)
+        game.handle_click(cell_pos, 1)
+
+        self.assertEqual(game.towers, [])
+        self.assertEqual(game.pending_cell, (0, 0))
+
+        game.handle_click(dict(self.ui.shop_cards())["rapid"].center, 1)
+        game.handle_click(cell_pos, 1)
+
+        self.assertEqual(game.towers[0].kind, "rapid")
+        self.assertEqual(game.gold, 50)
+
+    def test_invalid_click_keeps_existing_preview(self):
+        game = self.ui.Game()
+        cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
+        game.handle_click(cell_pos, 1)
+
+        invalid_positions = [
+            self.ui.WAYPOINTS[1],
+            (self.ui.WALL_LEFT + 10, 100),
+            (-20, -20),
+        ]
+        for position in invalid_positions:
+            game.handle_click(position, 1)
+            self.assertEqual(game.pending_cell, (0, 0))
+            self.assertEqual(game.towers, [])
+
+    def test_existing_tower_replaces_preview_with_delete_state(self):
+        game = self.ui.Game()
+        existing = self.ui.Tower(2, 0, "rapid")
+        game.towers = [existing]
+        game.pending_cell = (0, 0)
+
+        game.handle_click((existing.x, existing.y), 1)
+
+        self.assertIsNone(game.pending_cell)
+        self.assertEqual(game.delete_cell, (2, 0))
+
+    def test_game_over_clears_pending_and_delete_state(self):
+        game = self.ui.Game()
+        game.pending_cell = (0, 0)
+        game.delete_cell = (1, 0)
+        game.lives = 0
+
+        game.update()
+
+        self.assertIsNone(game.pending_cell)
+        self.assertIsNone(game.delete_cell)
+
+    def test_free_cell_closes_delete_menu_and_becomes_preview(self):
+        game = self.ui.Game()
+        game.towers = [self.ui.Tower(2, 0, "rapid")]
+        game.delete_cell = (2, 0)
+
+        game.handle_click((20, 20), 1)
+
+        self.assertIsNone(game.delete_cell)
+        self.assertEqual(game.pending_cell, (0, 0))
+
+    def test_non_left_click_does_not_change_preview(self):
+        game = self.ui.Game()
+        game.pending_cell = (0, 0)
+
+        game.handle_click((60, 20), 2)
+        game.handle_click((60, 20), 3)
+
+        self.assertEqual(game.pending_cell, (0, 0))
+        self.assertEqual(game.towers, [])
+
+    def test_starting_wave_keeps_preview(self):
+        game = self.ui.Game()
+        game.pending_cell = (0, 0)
+
+        game.handle_click((44, 260), 1)
+
+        self.assertTrue(game.wave_active)
+        self.assertEqual(game.pending_cell, (0, 0))
+
+    def test_reset_clears_preview(self):
+        game = self.ui.Game()
+        game.pending_cell = (0, 0)
+
+        game.reset()
+
+        self.assertIsNone(game.pending_cell)
+
+    def test_delete_confirmation_does_not_create_preview(self):
+        game = self.ui.Game()
+        tower = self.ui.Tower(2, 0, "rapid")
+        game.towers = [tower]
+        game.delete_cell = (2, 0)
+
+        game.handle_click((tower.x, tower.y), 1)
+
+        self.assertEqual(game.towers, [])
+        self.assertIsNone(game.pending_cell)
+        self.assertIsNone(game.delete_cell)
+
+    def test_invalid_click_closes_delete_without_preview(self):
+        game = self.ui.Game()
+        game.towers = [self.ui.Tower(2, 0, "rapid")]
+        game.delete_cell = (2, 0)
+
+        game.handle_click(self.ui.WAYPOINTS[1], 1)
+
+        self.assertIsNone(game.delete_cell)
+        self.assertIsNone(game.pending_cell)
+        self.assertEqual(len(game.towers), 1)
+
+    def test_tower_can_be_confirmed_during_active_wave(self):
+        game = self.ui.Game()
+        game.start_wave()
+
+        game.handle_click((20, 20), 1)
+        game.handle_click((20, 20), 1)
+
+        self.assertEqual([(tower.col, tower.row) for tower in game.towers], [(0, 0)])
 
     def test_path_cells_are_not_buildable(self):
         game = self.ui.Game()
@@ -118,11 +278,143 @@ class UiBehaviorTests(unittest.TestCase):
         app.game.draw(self.screen)
         self.assertEqual(self.screen.get_at((860, 180))[:3], self.ui.PATH)
 
+    def test_pending_range_draws_without_creating_tower(self):
+        game = self.ui.Game()
+        position = (7 * self.ui.CELL + 20, 7 * self.ui.CELL + 20)
+        before = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        after = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        game.draw(before)
+
+        game.handle_click(position, 1)
+        game.draw(after)
+
+        radius = self.ui.TOWER_TYPES["rapid"]["range"]
+        edge = (position[0] + radius - 1, position[1])
+        self.assertNotEqual(before.get_at(edge), after.get_at(edge))
+        self.assertEqual(game.towers, [])
+
+    def test_pending_preview_draws_unfilled_tower_outline(self):
+        game = self.ui.Game()
+        col, row = 7, 7
+        center = (col * self.ui.CELL + 20, row * self.ui.CELL + 20)
+        stats = self.ui.TOWER_TYPES[game.selected]
+        range_only = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        preview = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        game.draw(range_only)
+        self.ui.draw_tower_range(range_only, center, stats)
+
+        game.pending_cell = (col, row)
+        game.draw(preview)
+
+        tower_rect = pygame.Rect(
+            col * self.ui.CELL + 4,
+            row * self.ui.CELL + 4,
+            self.ui.CELL - 8,
+            self.ui.CELL - 8,
+        )
+        self.assertEqual(preview.get_at((tower_rect.left, tower_rect.centery))[:3], stats["color"])
+        self.assertEqual(preview.get_at(center), range_only.get_at(center))
+
+    def test_pending_range_updates_after_tower_type_change(self):
+        game = self.ui.Game()
+        position = (7 * self.ui.CELL + 20, 7 * self.ui.CELL + 20)
+        rapid_preview = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        cannon_preview = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        game.handle_click(position, 1)
+        game.draw(rapid_preview)
+
+        game.selected = "cannon"
+        game.draw(cannon_preview)
+
+        rapid_edge = (position[0] + self.ui.TOWER_TYPES["rapid"]["range"] - 1, position[1])
+        self.assertNotEqual(rapid_preview.get_at(rapid_edge), cannon_preview.get_at(rapid_edge))
+
+    def test_built_tower_range_stays_hover_only(self):
+        game = self.ui.Game()
+        game.towers = [self.ui.Tower(7, 7, "rapid")]
+        plain = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        hovered = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
+        game.draw(plain)
+
+        game.hover_cell = (7, 7)
+        game.draw(hovered)
+
+        center = (7 * self.ui.CELL + 20, 7 * self.ui.CELL + 20)
+        edge = (center[0] + self.ui.TOWER_TYPES["rapid"]["range"] - 1, center[1])
+        self.assertNotEqual(plain.get_at(edge), hovered.get_at(edge))
+
     def test_cannon_has_viable_single_target_balance(self):
         cannon = self.ui.TOWER_TYPES["cannon"]
         self.assertEqual(cannon["cost"], 200)
         self.assertEqual(cannon["damage"], 75)
         self.assertEqual(cannon["fire_rate"], 60)
+
+    def test_mcqueen_applies_enemy_type_multipliers(self):
+        self.assertIn("kind", inspect.signature(self.ui.Enemy).parameters)
+        mcqueen = self.ui.Enemy(50, 1.5, 8, "mcqueen")
+
+        self.assertEqual(mcqueen.kind, "mcqueen")
+        self.assertEqual(mcqueen.max_hp, 30)
+        self.assertEqual(mcqueen.hp, 30)
+        self.assertEqual(mcqueen.speed, 3.0)
+        self.assertEqual(mcqueen.gold, 6)
+        self.assertEqual(mcqueen.life_damage, 2)
+
+    def test_every_fifth_spawn_is_mcqueen(self):
+        game = self.ui.Game()
+        game.start_wave()
+
+        for _ in range(5):
+            game.spawn_timer = 0
+            game.update()
+
+        self.assertEqual(
+            [getattr(enemy, "kind", None) for enemy in game.enemies],
+            ["normal", "normal", "normal", "normal", "mcqueen"],
+        )
+
+    def test_six_enemy_wave_has_five_normal_and_one_mcqueen(self):
+        game = self.ui.Game()
+        game.wave = 1
+        game.start_wave()
+
+        for _ in range(6):
+            game.spawn_timer = 0
+            game.update()
+
+        kinds = [enemy.kind for enemy in game.enemies]
+        self.assertEqual(kinds.count("normal"), 5)
+        self.assertEqual(kinds.count("mcqueen"), 1)
+        self.assertEqual(kinds[4], "mcqueen")
+
+    def test_mcqueen_spawn_count_restarts_each_wave(self):
+        game = self.ui.Game()
+        game.start_wave()
+        for _ in range(5):
+            game.spawn_timer = 0
+            game.update()
+        game.enemies.clear()
+        game.wave_active = False
+
+        game.start_wave()
+        game.spawn_timer = 0
+        game.update()
+
+        self.assertEqual(getattr(game.enemies[0], "kind", None), "normal")
+
+    def test_mcqueen_leak_removes_two_lives(self):
+        self.assertIn("kind", inspect.signature(self.ui.Enemy).parameters)
+        game = self.ui.Game()
+        game.drain_events()
+        enemy = self.ui.Enemy(50, 1.5, 8, "mcqueen")
+        enemy.alive = False
+        enemy.reached_end = True
+        game.enemies = [enemy]
+
+        game.update()
+
+        self.assertEqual(game.lives, 1)
+        self.assertIn("lives_changed", game.drain_events())
 
     def test_tower_prioritizes_enemy_on_final_path_section(self):
         tower = self.ui.Tower(18, 3, "rapid")
@@ -205,6 +497,40 @@ class UiUxSkillTests(unittest.TestCase):
         self.assertEqual(game.selected, "cannon")
         game.handle_click(cards["rapid"].center, 1)
         self.assertEqual(game.selected, "rapid")
+
+    def test_keyboard_type_change_updates_pending_selection(self):
+        app = self.make_app()
+        app.state = self.ui.ScreenState.GAME
+        app.game.handle_click((20, 20), 1)
+
+        app.handle_event(self.key(pygame.K_2))
+
+        self.assertEqual(app.game.selected, "cannon")
+        self.assertEqual(app.game.pending_cell, (0, 0))
+
+    def test_mouse_motion_does_not_move_pending_cell(self):
+        app = self.make_app()
+        app.state = self.ui.ScreenState.GAME
+        app.game.pending_cell = (0, 0)
+
+        app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, {"pos": (60, 20)}))
+
+        self.assertEqual(app.game.pending_cell, (0, 0))
+        self.assertEqual(app.game.hover_cell, (1, 0))
+
+    def test_pause_blocks_placement_and_keeps_preview(self):
+        app = self.make_app()
+        app.state = self.ui.ScreenState.GAME
+        app.game.pending_cell = (0, 0)
+        app.handle_event(self.key(pygame.K_ESCAPE))
+
+        app.handle_event(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": (60, 20)})
+        )
+
+        self.assertEqual(app.state, self.ui.ScreenState.PAUSE)
+        self.assertEqual(app.game.pending_cell, (0, 0))
+        self.assertEqual(app.game.towers, [])
 
     # --- scaling / letterbox ---
 

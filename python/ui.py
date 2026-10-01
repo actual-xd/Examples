@@ -13,6 +13,8 @@ import pygame
 
 WIDTH, HEIGHT = 1000, 720
 FPS = 60
+# ДОБАВЛЕНО: задержка до автоматического старта следующей волны (15 секунд в кадрах).
+NEXT_WAVE_DELAY = 15 * FPS
 CELL = 40
 UI_BAR_HEIGHT = 120
 SHOP_CARD_SIZE = (80, 80)
@@ -85,6 +87,21 @@ TOWER_TYPES = {
         "range": 120,
         "color": ORANGE,
         "cost": 200,
+    },
+}
+
+ENEMY_TYPES = {
+    "normal": {
+        "hp_multiplier": 1.0,
+        "speed_multiplier": 1.0,
+        "gold_multiplier": 1.0,
+        "life_damage": 1,
+    },
+    "mcqueen": {
+        "hp_multiplier": 0.6,
+        "speed_multiplier": 2.0,
+        "gold_multiplier": 0.8,
+        "life_damage": 2,
     },
 }
 
@@ -330,11 +347,14 @@ def draw_path(surface):
 
 
 class Enemy:
-    def __init__(self, hp, speed, gold):
-        self.max_hp = hp
-        self.hp = hp
-        self.speed = speed
-        self.gold = gold
+    def __init__(self, hp, speed, gold, kind="normal"):
+        stats = ENEMY_TYPES[kind]
+        self.kind = kind
+        self.max_hp = int(hp * stats["hp_multiplier"])
+        self.hp = self.max_hp
+        self.speed = speed * stats["speed_multiplier"]
+        self.gold = int(gold * stats["gold_multiplier"])
+        self.life_damage = stats["life_damage"]
         self.waypoint_index = 0
         self.distance_travelled = 0
         self.x, self.y = WAYPOINTS[0]
@@ -363,8 +383,21 @@ class Enemy:
         if not self.alive:
             return
         center = (int(self.x), int(self.y))
-        pygame.draw.circle(surface, RED, center, 15)
-        pygame.draw.circle(surface, (247, 124, 92), center, 9)
+
+        if self.kind == "mcqueen":
+            # Fast enemies are triangles and use a darker red than normal enemies.
+            color = (155, 0, 0)
+            points = [
+                (center[0], center[1] - 17),
+                (center[0] - 15, center[1] + 12),
+                (center[0] + 15, center[1] + 12),
+            ]
+            pygame.draw.polygon(surface, color, points)
+            pygame.draw.polygon(surface, BLACK, points, 2)
+        else:
+            pygame.draw.circle(surface, RED, center, 15)
+            pygame.draw.circle(surface, (247, 124, 92), center, 9)
+
         bar = pygame.Rect(int(self.x - 12), int(self.y - 25), 24, 4)
         pygame.draw.rect(surface, BLACK, bar.inflate(2, 2))
         pygame.draw.rect(surface, GREEN, (bar.x, bar.y, int(bar.width * max(0, self.hp / self.max_hp)), bar.height))
@@ -418,6 +451,14 @@ class Projectile:
     def draw(self, surface):
         if self.alive:
             pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.size)
+
+
+def draw_tower_range(surface, center, stats):
+    radius = stats["range"]
+    layer = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+    pygame.draw.circle(layer, (*stats["color"], 35), (radius, radius), radius)
+    pygame.draw.circle(layer, (*stats["color"], 150), (radius, radius), radius, 2)
+    surface.blit(layer, (center[0] - radius, center[1] - radius))
 
 
 class Tower:
@@ -479,10 +520,7 @@ class Tower:
         pygame.draw.rect(surface, BLACK, rect, 2, border_radius=7)
         pygame.draw.circle(surface, WHITE, (self.x, self.y), 3)
         if show_range:
-            range_layer = pygame.Surface((self.stats["range"] * 2,) * 2, pygame.SRCALPHA)
-            pygame.draw.circle(range_layer, (*self.stats["color"], 35), (self.stats["range"],) * 2, self.stats["range"])
-            pygame.draw.circle(range_layer, (*self.stats["color"], 150), (self.stats["range"],) * 2, self.stats["range"], 2)
-            surface.blit(range_layer, (self.x - self.stats["range"], self.y - self.stats["range"]))
+            draw_tower_range(surface, (self.x, self.y), self.stats)
 
 
 class Game:
@@ -515,12 +553,22 @@ class Game:
         self.delete_cell = None
         self.game_over = False
         self.pending_cell = None
+        # ДОБАВЛЕНО: таймер до автостарта следующей волны (в кадрах), None — таймер не идёт.
+        self.next_wave_timer = None
         for name in ("gold_changed", "lives_changed", "wave_changed"):
             self.emit(name)
 
+    # ДОБАВЛЕНО: новую волну можно запускать, как только последний враг текущей уже заспавнился.
+    @property
+    def can_start_wave(self):
+        return not self.game_over and self.spawn_q == 0
+
     def start_wave(self):
-        if self.wave_active or self.game_over:
+        # ИЗМЕНЕНО: вместо проверки `self.wave_active` теперь проверяется can_start_wave.
+        if not self.can_start_wave:
             return
+        # ДОБАВЛЕНО: ручной или автоматический старт сбрасывает таймер.
+        self.next_wave_timer = None
         self.wave += 1
         scale = 1 + (self.wave - 1) * 0.35
         self.wave_conf = {
@@ -541,14 +589,18 @@ class Game:
             self.spawn_timer -= 1
             if self.spawn_timer <= 0:
                 config = self.wave_conf
-                self.enemies.append(Enemy(config["hp"], config["speed"], config["gold"]))
+                spawn_number = config["count"] - self.spawn_q + 1
+                kind = "mcqueen" if spawn_number % 5 == 0 else "normal"
+                self.enemies.append(
+                    Enemy(config["hp"], config["speed"], config["gold"], kind)
+                )
                 self.spawn_q -= 1
                 self.spawn_timer = 25
 
         for enemy in self.enemies:
             enemy.update()
             if enemy.reached_end:
-                self.lives -= 1
+                self.lives -= enemy.life_damage
                 self.emit("lives_changed")
 
         for tower in self.towers:
@@ -569,15 +621,38 @@ class Game:
             self.emit("gold_changed")
         self.enemies = survivors
 
+        # ДОБАВЛЕНО: отсчёт таймера; по истечении времени волна стартует автоматически.
+        if self.next_wave_timer is not None:
+            self.next_wave_timer -= 1
+            if self.next_wave_timer <= 0:
+                self.start_wave()
+
         if self.wave_active and self.spawn_q == 0 and not self.enemies:
             self.wave_active = False
+            # ДОБАВЛЕНО: последний враг волны мёртв — запускаем таймер на 15 секунд.
+            self.next_wave_timer = NEXT_WAVE_DELAY
         if self.lives <= 0:
             self.game_over = True
+            self.pending_cell = None
+            self.delete_cell = None
+            # ДОБАВЛЕНО: при проигрыше таймер отключается.
+            self.next_wave_timer = None
+
+    def _buildable_cell(self, cell):
+        col, row = cell
+        return (
+            0 <= col < GRID_COLS
+            and 0 <= row < GRID_ROWS
+            and col * CELL < WALL_LEFT
+            and cell not in PATH_CELLS
+            and all((tower.col, tower.row) != cell for tower in self.towers)
+        )
 
     def handle_click(self, position, button):
         if button != 1 or self.game_over:
             return
-        if not self.wave_active and math.hypot(position[0] - 44, position[1] - 260) <= 26:
+        # ИЗМЕНЕНО: вместо `not self.wave_active` теперь проверяется can_start_wave.
+        if self.can_start_wave and math.hypot(position[0] - 44, position[1] - 260) <= 26:
             self.start_wave()
             self.delete_cell = None
             return
@@ -592,29 +667,41 @@ class Game:
             center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
             if math.hypot(position[0] - center[0], position[1] - center[1]) <= 28:
                 self.towers = [tower for tower in self.towers if (tower.col, tower.row) != (col, row)]
-            self.delete_cell = None
-            return
-        col, row = position[0] // CELL, position[1] // CELL
-        if not (0 <= col < GRID_COLS and 0 <= row < GRID_ROWS):
-            return
-        if position[0] >= WALL_LEFT:
-            return
-        for tower in self.towers:
-            if (tower.col, tower.row) == (col, row):
-                self.delete_cell = (col, row)
+                self.delete_cell = None
                 return
-        if (col, row) in PATH_CELLS:
+            self.delete_cell = None
+
+        col, row = position[0] // CELL, position[1] // CELL
+        cell = (col, row)
+        for tower in self.towers:
+            if (tower.col, tower.row) == cell:
+                self.pending_cell = None
+                self.delete_cell = cell
+                return
+        if not self._buildable_cell(cell):
             return
+        if self.pending_cell != cell:
+            self.pending_cell = cell
+            return
+
         cost = TOWER_TYPES[self.selected]["cost"]
         if self.gold >= cost:
             self.towers.append(Tower(col, row, self.selected))
             self.gold -= cost
+            self.pending_cell = None
             self.emit("gold_changed")
 
     def draw(self, surface):
         draw_field(surface)
         draw_path(surface)
         surface.blit(BRICK_WALL, (0, 0))
+        if self.pending_cell and self._buildable_cell(self.pending_cell):
+            col, row = self.pending_cell
+            stats = TOWER_TYPES[self.selected]
+            center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
+            draw_tower_range(surface, center, stats)
+            rect = pygame.Rect(col * CELL + 4, row * CELL + 4, CELL - 8, CELL - 8)
+            pygame.draw.rect(surface, stats["color"], rect, 3, border_radius=7)
         for tower in self.towers:
             show_range = self.hover_cell == (tower.col, tower.row)
             tower.draw(surface, show_range)
@@ -867,6 +954,8 @@ class App:
                 else:
                     self.push(ScreenState.PAUSE)
             elif event.key == pygame.K_SPACE:
+                # start_wave сам проверяет can_start_wave, поэтому пробел тоже работает
+                # раньше завершения волны (ДОБАВЛЕНО через изменение start_wave).
                 self.game.start_wave()
             elif event.key == pygame.K_1:
                 self.game.selected = "rapid"
@@ -990,12 +1079,17 @@ class App:
         pygame.draw.rect(surface, BLACK, bar)
         self.hud.handle(self.game.drain_events(), self.game.gold, self.game.lives, self.game.wave)
         self.hud.draw(surface, self.game.selected)
-        if not self.game.wave_active and not self.game.game_over:
+        # ИЗМЕНЕНО: кнопка START показывается по can_start_wave (а не по `not wave_active`).
+        if self.game.can_start_wave:
             center = (44, 260)
             pygame.draw.circle(surface, GREEN, center, 28)
             pygame.draw.circle(surface, WHITE, center, 28, 2)
             draw_play_icon(surface, center, 20)
             surface.blit(self.hud.start_surf, (79, 250))
+            # ДОБАВЛЕНО: таймер до автостарта волны над кнопкой (в секундах, округление вверх).
+            if self.game.next_wave_timer is not None:
+                seconds = math.ceil(self.game.next_wave_timer / FPS)
+                draw_centered_text(surface, self.button_font, f"{seconds}", GOLD, (center[0], center[1] - 48))
 
 
 def main():

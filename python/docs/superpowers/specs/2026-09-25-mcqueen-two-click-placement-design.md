@@ -70,7 +70,9 @@ Draw pending range independently from built towers:
 
 - center on `pending_cell`;
 - use current selected tower's range and color;
-- draw translucent fill and visible outline;
+- draw translucent range fill and visible range outline;
+- draw the future tower's rounded rectangle in the selected tower's color, with a 3 px outline and no fill;
+- match the installed tower's 4 px cell inset, `CELL - 8` size, and 7 px corner radius;
 - do not create a temporary tower or include preview in targeting, firing, collision, or occupied-cell checks;
 - keep preview visible when the pointer leaves its cell;
 - skip drawing if external state makes the pending cell invalid, without creating or moving a tower.
