@@ -143,7 +143,6 @@ SETTINGS_HINT_POS = (SAFE.centerx, SAFE.bottom - 24)
 
 
 def pause_items():
-    """Three stacked pause-menu buttons, centered on the canvas."""
     rects = [pygame.Rect(0, 0, 260, 52) for _ in range(3)]
     for index, rect in enumerate(rects):
         rect.center = (WIDTH // 2, HEIGHT // 2 + (index - 1) * 68)
@@ -151,7 +150,6 @@ def pause_items():
 
 
 def letterbox_rect(window_size):
-    """Fit the 1000x720 canvas inside any window without stretching it."""
     scale = min(window_size[0] / WIDTH, window_size[1] / HEIGHT)
     width, height = int(WIDTH * scale), int(HEIGHT * scale)
     return pygame.Rect(
@@ -160,7 +158,6 @@ def letterbox_rect(window_size):
 
 
 def shop_cards():
-    """Two shop cards centered in the bottom bar."""
     width, height = SHOP_CARD_SIZE
     left = (WIDTH - (2 * width + SHOP_CARD_GAP)) // 2
     top = HEIGHT - 12 - height
@@ -234,7 +231,6 @@ def draw_hover_highlight(surface, rect):
 
 
 def build_brick_wall(size):
-    """Build a straight brick wall outside the road and buildable grid."""
     width, height = size
     wall = pygame.Surface(size, pygame.SRCALPHA)
     wall_width = min(WALL_WIDTH, width)
@@ -458,8 +454,6 @@ class Tower:
 
 
 class Game:
-    """Rules and objects for one game."""
-
     def __init__(self):
         self.reset()
 
@@ -538,7 +532,7 @@ class Game:
             self.delete_cell = None
             self.next_wave_timer = None
 
-    def _buildable_cell(self, cell):
+    def buildable_cell(self, cell):
         col, row = cell
         return (
             0 <= col < GRID_COLS
@@ -578,7 +572,7 @@ class Game:
                 self.pending_cell = None
                 self.delete_cell = cell
                 return
-        if not self._buildable_cell(cell):
+        if not self.buildable_cell(cell):
             return
         if self.pending_cell != cell:
             self.pending_cell = cell
@@ -593,7 +587,7 @@ class Game:
         draw_field(surface)
         draw_path(surface)
         surface.blit(BRICK_WALL, (0, 0))
-        if self.pending_cell and self._buildable_cell(self.pending_cell):
+        if self.pending_cell and self.buildable_cell(self.pending_cell):
             col, row = self.pending_cell
             stats = TOWER_TYPES[self.selected]
             center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
@@ -607,7 +601,7 @@ class Game:
             enemy.draw(surface)
         for projectile in self.projectiles:
             projectile.draw(surface)
-        self._draw_delete_menu(surface)
+        self.draw_delete_menu(surface)
         if self.game_over:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((*OVERLAY, 185))
@@ -616,7 +610,7 @@ class Game:
             draw_centered_text(surface, minecraft_font(28), "GAME OVER", DANGER_TEXT, (WIDTH // 2, HEIGHT // 2 - 22))
             draw_centered_text(surface, minecraft_font(24), "Click to restart  ·  Esc for menu", TEXT, (WIDTH // 2, HEIGHT // 2 + 20))
 
-    def _draw_delete_menu(self, surface):
+    def draw_delete_menu(self, surface):
         if not self.delete_cell:
             return
         col, row = self.delete_cell
@@ -627,8 +621,6 @@ class Game:
 
 
 class Hud:
-    """Draw score, lives, wave, and tower buttons."""
-
     def __init__(self, font, small_font):
         self.font = font
         self.small_font = small_font
@@ -636,9 +628,9 @@ class Hud:
         self.gold_pos = (SAFE_MARGIN, HEIGHT - 80)
         self.lives_pos = (SAFE_MARGIN, HEIGHT - 40)
         self.wave_pos = (220, HEIGHT - 80)
-        self.cards = {kind: self._make_card(info) for kind, info in TOWER_TYPES.items()}
+        self.cards = {kind: self.make_card(info) for kind, info in TOWER_TYPES.items()}
 
-    def _make_card(self, info):
+    def make_card(self, info):
         card = pygame.Surface(SHOP_CARD_SIZE)
         card.fill(info["color"])
         card.blit(self.small_font.render(info["name"], True, INK), (6, 6))
@@ -702,7 +694,7 @@ class App:
         track = self.volume_track
         self.set_volume(round((x - track.left) / track.width * 100))
 
-    def _to_virtual(self, pos):
+    def to_virtual(self, pos):
         window = pygame.display.get_surface()
         if window is None:
             return pos
@@ -719,7 +711,7 @@ class App:
                 self.screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
             return
         if event.type == pygame.MOUSEMOTION:
-            self.mouse_pos = self._to_virtual(event.pos)
+            self.mouse_pos = self.to_virtual(event.pos)
             if self.state is ScreenState.SETTINGS and self.dragging_volume:
                 self.set_volume_from_x(self.mouse_pos[0])
             elif self.state is ScreenState.GAME:
@@ -732,17 +724,16 @@ class App:
             return
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                self._escape()
+                self.escape()
             elif event.key == pygame.K_SPACE and self.state is ScreenState.GAME:
                 self.game.start_wave()
             return
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            self._click(self._to_virtual(event.pos))
+            self.click(self.to_virtual(event.pos))
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging_volume = False
 
-    def _escape(self):
-        """Esc opens the pause menu in game, and backs out of any menu."""
+    def escape(self):
         if self.state is ScreenState.GAME:
             if self.game.game_over:
                 self.switch(ScreenState.MENU)
@@ -752,7 +743,7 @@ class App:
             self.dragging_volume = False
             self.pop()
 
-    def _click(self, pos):
+    def click(self, pos):
         if self.state is ScreenState.MENU:
             if self.play_button.collidepoint(pos):
                 if self.game.game_over:
@@ -785,17 +776,17 @@ class App:
 
     def draw(self):
         if self.state is ScreenState.MENU:
-            self._draw_menu(self.canvas)
+            self.draw_menu(self.canvas)
         elif self.state is ScreenState.SETTINGS:
-            self._draw_settings(self.canvas)
+            self.draw_settings(self.canvas)
         else:
             self.game.draw(self.canvas)
-            self._draw_game_ui(self.canvas)
+            self.draw_game_ui(self.canvas)
             if self.state is ScreenState.PAUSE:
-                self._draw_pause(self.canvas)
-        self._present()
+                self.draw_pause(self.canvas)
+        self.present()
 
-    def _present(self):
+    def present(self):
         window = pygame.display.get_surface()
         if window is None:
             self.screen.blit(self.canvas, (0, 0))
@@ -819,7 +810,7 @@ class App:
             self.draw()
             frames += 1
 
-    def _draw_menu(self, surface):
+    def draw_menu(self, surface):
         draw_vertical_gradient(surface, BG_TOP, BG_BOTTOM)
         draw_centered_text(surface, self.title_font, "TOWER DEFENCE", TEXT, MENU_TITLE_POS)
         draw_centered_text(surface, self.font, "BUILD  ·  DEFEND  ·  SURVIVE", TEXT_MUTED, MENU_SUBTITLE_POS)
@@ -843,7 +834,7 @@ class App:
             surface, self.font, "Press the play button to enter the battlefield", TEXT_MUTED, MENU_HINT_POS
         )
 
-    def _draw_settings(self, surface):
+    def draw_settings(self, surface):
         draw_vertical_gradient(surface, BG_TOP, BG_BOTTOM)
         draw_panel(surface, SETTINGS_PANEL, PANEL, 235, PANEL_BORDER)
         draw_text(surface, self.title_font, "SETTINGS", TEXT, SETTINGS_TITLE_POS)
@@ -868,7 +859,7 @@ class App:
             surface, self.font, "Drag the slider to set the volume  ·  Esc back", TEXT_MUTED, SETTINGS_HINT_POS
         )
 
-    def _draw_pause(self, surface):
+    def draw_pause(self, surface):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         overlay.fill((*OVERLAY, 160))
         surface.blit(overlay, (0, 0))
@@ -882,7 +873,7 @@ class App:
             pygame.draw.rect(surface, TEXT_MUTED, rect, 1, border_radius=8)
             draw_centered_text(surface, self.button_font, label, TEXT, rect.center)
 
-    def _draw_game_ui(self, surface):
+    def draw_game_ui(self, surface):
         pygame.draw.rect(surface, INK, (0, PLAYFIELD_HEIGHT, WIDTH, UI_BAR_HEIGHT))
         self.hud.draw(surface, self.game)
         if self.game.can_start_wave:
