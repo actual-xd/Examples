@@ -1,19 +1,13 @@
-"""A small tower-defence game made with Pygame.
-
-Run it with: python ui.py
-"""
-
 from enum import Enum, auto
 from functools import lru_cache
 import math
 from pathlib import Path
-
 import pygame
 
 
 WIDTH, HEIGHT = 1000, 720
 FPS = 60
-# ДОБАВЛЕНО: задержка до автоматического старта следующей волны (15 секунд в кадрах).
+
 NEXT_WAVE_DELAY = 15 * FPS
 CELL = 40
 UI_BAR_HEIGHT = 120
@@ -27,38 +21,41 @@ GRID_ROWS = PLAYFIELD_HEIGHT // CELL
 FONT_PATH = Path(__file__).with_name("Minecraft.otf")
 
 SCREEN_RECT = pygame.Rect(0, 0, WIDTH, HEIGHT)
-LETTERBOX = (5, 5, 8)
-# 4% of the short edge — desktop stand-in for TV overscan / phone notch reserve.
-SAFE_MARGIN = int(0.04 * min(WIDTH, HEIGHT))
-DIRECTION_KEYS = {
-    pygame.K_UP: "up",
-    pygame.K_w: "up",
-    pygame.K_DOWN: "down",
-    pygame.K_s: "down",
-    pygame.K_LEFT: "left",
-    pygame.K_a: "left",
-    pygame.K_RIGHT: "right",
-    pygame.K_d: "right",
-}
+LETTERBOX = (12, 17, 14)
 
-# Palette follows td-ui.py for field, path, panel, and tower colors.
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-PANEL_LIGHT = (35, 35, 35)
-GREEN = (0, 100, 0)
-GREEN_DARK = (0, 70, 0)
-GREEN_HOVER = (60, 170, 60)
-PATH = (176, 163, 44)
-BLUE = (0, 0, 200)
-ORANGE = (255, 229, 84)
-GOLD = (255, 230, 20)
-RED = (200, 0, 0)
-GRAY = (145, 145, 145)
-DARK_GRAY = (80, 80, 80)
-BRICK_RED = (139, 69, 43)
-DARK_BRICK = (91, 54, 39)
-BRICK_HIGHLIGHT = (171, 91, 54)
-WALL_BASE = (116, 64, 43)
+SAFE_MARGIN = int(0.04 * min(WIDTH, HEIGHT))
+
+PAUSE_LABELS = ("RESUME", "SETTINGS", "MAIN MENU")
+
+
+INK = (20, 26, 22)
+TEXT = (240, 238, 230)
+TEXT_MUTED = (162, 176, 164)
+BG_TOP = (16, 26, 21)
+BG_BOTTOM = (32, 50, 39)
+PANEL = (26, 38, 32)
+PANEL_LIGHT = (42, 58, 49)
+PANEL_BORDER = (66, 88, 76)
+ACCENT = (232, 178, 62)
+ACCENT_HOVER = (245, 199, 96)
+ACCENT_DARK = (188, 140, 38)
+GRASS = (58, 105, 66)
+GRASS_LINE = (46, 84, 53)
+ROAD = (188, 150, 108)
+ROAD_EDGE = (128, 98, 68)
+WALL_BASE = (132, 86, 62)
+BRICK = (168, 110, 78)
+BRICK_LIGHT = (196, 140, 104)
+BRICK_DARK = (120, 76, 56)
+TOWER_RAPID = (86, 158, 205)
+TOWER_CANNON = (178, 132, 208)
+ENEMY = (214, 112, 98)
+ENEMY_CORE = (240, 168, 150)
+ENEMY_FAST = (176, 68, 56)
+DANGER = (176, 68, 58)
+DANGER_TEXT = (232, 120, 104)
+HEALTH = (124, 196, 128)
+OVERLAY = (10, 16, 13)
 
 WAYPOINTS = [
     (-40, 260),
@@ -77,7 +74,7 @@ TOWER_TYPES = {
         "damage": 10,
         "fire_rate": 10,
         "range": 150,
-        "color": BLUE,
+        "color": TOWER_RAPID,
         "cost": 100,
     },
     "cannon": {
@@ -85,8 +82,8 @@ TOWER_TYPES = {
         "damage": 75,
         "fire_rate": 60,
         "range": 120,
-        "color": ORANGE,
-        "cost": 200,
+        "color": TOWER_CANNON,
+        "cost": 500,
     },
 }
 
@@ -121,77 +118,59 @@ class ScreenState(Enum):
     PAUSE = auto()
 
 
-class Layout:
-    """Put things on screen without guessing every pixel."""
+SAFE = SCREEN_RECT.inflate(-2 * SAFE_MARGIN, -2 * SAFE_MARGIN)
+PLAY_BUTTON = pygame.Rect(0, 0, 124, 124)
+PLAY_BUTTON.center = (WIDTH // 2, HEIGHT // 2 - 84)
+SETTINGS_BUTTON = pygame.Rect(0, 0, 64, 64)
+SETTINGS_BUTTON.midtop = (WIDTH // 2, PLAY_BUTTON.bottom + 62)
+BACK_BUTTON = pygame.Rect(58, 22, 116, 44)
+SETTINGS_PANEL = pygame.Rect(0, 0, SAFE.width - 80, 400)
+SETTINGS_PANEL.midtop = (SAFE.centerx, SAFE.top + 150)
+VOLUME_TRACK = pygame.Rect(0, 0, 480, 8)
+VOLUME_TRACK.center = (SETTINGS_PANEL.centerx, SETTINGS_PANEL.top + 200)
+VOLUME_HIT = VOLUME_TRACK.inflate(10, 10)
+PAUSE_PANEL = pygame.Rect(0, 0, 340, 220)
+PAUSE_PANEL.center = (WIDTH // 2, HEIGHT // 2)
 
-    @staticmethod
-    def anchor_point(area, anchor, offset=(0, 0)):
-        x_map = {"left": area.left, "center": area.centerx, "right": area.right}
-        y_map = {"top": area.top, "middle": area.centery, "bottom": area.bottom}
-        return (x_map[anchor[0]] + offset[0], y_map[anchor[1]] + offset[1])
-
-    @classmethod
-    def place(cls, area, anchor, width, height, offset=(0, 0)):
-        rect = pygame.Rect(0, 0, width, height)
-        rect.center = cls.anchor_point(area, anchor, offset)
-        return rect
-
-    @staticmethod
-    def hbox(area, widths, height, gap):
-        """Flow children left-to-right inside area, centered as a group."""
-        total = sum(widths) + gap * (len(widths) - 1)
-        x = area.left + (area.width - total) // 2
-        rects = []
-        for width in widths:
-            rects.append(pygame.Rect(x, area.top + (area.height - height) // 2, width, height))
-            x += width + gap
-        return rects
-
-    @staticmethod
-    def vbox(area, count, width, height, gap):
-        """Flow children top-to-bottom inside area, centered as a group."""
-        total = count * height + gap * (count - 1)
-        y = area.top + (area.height - total) // 2
-        rects = []
-        for _ in range(count):
-            rects.append(pygame.Rect(area.left + (area.width - width) // 2, y, width, height))
-            y += height + gap
-        return rects
+MENU_TITLE_POS = (SAFE.centerx, SAFE.top + 97)
+MENU_SUBTITLE_POS = (SAFE.centerx, SAFE.top + 142)
+MENU_HINT_POS = (SAFE.centerx, SAFE.bottom - 42)
+MENU_SETTINGS_POS = (SETTINGS_BUTTON.centerx, SETTINGS_BUTTON.bottom + 18)
+SETTINGS_TITLE_POS = (SETTINGS_PANEL.left + 32, SETTINGS_PANEL.top + 40)
+SETTINGS_AUDIO_POS = (SETTINGS_PANEL.left + 32, SETTINGS_PANEL.top + 100)
+SETTINGS_VOLUME_POS = (SETTINGS_PANEL.left + 32, SETTINGS_PANEL.top + 154)
+SETTINGS_HINT_POS = (SAFE.centerx, SAFE.bottom - 24)
 
 
-def safe_rect(area, margin=SAFE_MARGIN):
-    """Leave space around the edge for important buttons and text."""
-    return area.inflate(-2 * margin, -2 * margin)
+def pause_items():
+    """Three stacked pause-menu buttons, centered on the canvas."""
+    rects = [pygame.Rect(0, 0, 260, 52) for _ in range(3)]
+    for index, rect in enumerate(rects):
+        rect.center = (WIDTH // 2, HEIGHT // 2 + (index - 1) * 68)
+    return rects
 
 
-def letterbox_rect(window_size, reference_size):
-    """Fit the game inside any window without stretching it."""
-    scale = min(window_size[0] / reference_size[0], window_size[1] / reference_size[1])
-    width = int(reference_size[0] * scale)
-    height = int(reference_size[1] * scale)
+def letterbox_rect(window_size):
+    """Fit the 1000x720 canvas inside any window without stretching it."""
+    scale = min(window_size[0] / WIDTH, window_size[1] / HEIGHT)
+    width, height = int(WIDTH * scale), int(HEIGHT * scale)
     return pygame.Rect(
         (window_size[0] - width) // 2, (window_size[1] - height) // 2, width, height
     )
 
 
 def shop_cards():
-    """Return the two shop card positions."""
+    """Two shop cards centered in the bottom bar."""
     width, height = SHOP_CARD_SIZE
-    area = pygame.Rect(0, 0, 2 * width + SHOP_CARD_GAP, height)
-    area.midbottom = Layout.anchor_point(SCREEN_RECT, ("center", "bottom"), (0, -12))
-    return list(zip(TOWER_TYPES, Layout.hbox(area, [width] * 2, height, SHOP_CARD_GAP)))
+    left = (WIDTH - (2 * width + SHOP_CARD_GAP)) // 2
+    top = HEIGHT - 12 - height
+    return [
+        (kind, pygame.Rect(left + index * (width + SHOP_CARD_GAP), top, width, height))
+        for index, kind in enumerate(TOWER_TYPES)
+    ]
 
 
-def settings_panel_rect():
-    """Return the settings panel position."""
-    safe = safe_rect(SCREEN_RECT)
-    panel = pygame.Rect(0, 0, safe.width - 80, 400)
-    panel.midtop = Layout.anchor_point(safe, ("center", "top"), (0, 14))
-    return panel
-
-
-def clamp(value, low, high):
-    return max(low, min(high, value))
+SHOP_CARDS = shop_cards()
 
 
 @lru_cache
@@ -201,18 +180,14 @@ def minecraft_font(size):
     return pygame.font.SysFont("arial", size)
 
 
-def draw_text(surface, font, text, color, position, shadow=BLACK):
-    x, y = position
-    if shadow:
-        shadow_surface = font.render(text, True, shadow)
-        surface.blit(shadow_surface, (x + 2, y + 2))
-    surface.blit(font.render(text, True, color), (x, y))
+def draw_text(surface, font, text, color, position):
+    surface.blit(font.render(text, True, color), position)
 
 
-def draw_centered_text(surface, font, text, color, center, shadow=BLACK):
+def draw_centered_text(surface, font, text, color, center):
     text_surface = font.render(text, True, color)
     position = (center[0] - text_surface.get_width() // 2, center[1] - text_surface.get_height() // 2)
-    draw_text(surface, font, text, color, position, shadow)
+    draw_text(surface, font, text, color, position)
 
 
 def draw_vertical_gradient(surface, top, bottom):
@@ -223,7 +198,7 @@ def draw_vertical_gradient(surface, top, bottom):
         pygame.draw.line(surface, color, (0, y), (surface.get_width(), y))
 
 
-def draw_panel(surface, rect, color=BLACK, alpha=225, border=DARK_GRAY, radius=14):
+def draw_panel(surface, rect, color=PANEL, alpha=225, border=PANEL_BORDER, radius=14):
     panel = pygame.Surface(rect.size, pygame.SRCALPHA)
     pygame.draw.rect(panel, (*color, alpha), panel.get_rect(), border_radius=radius)
     if border:
@@ -231,7 +206,7 @@ def draw_panel(surface, rect, color=BLACK, alpha=225, border=DARK_GRAY, radius=1
     surface.blit(panel, rect.topleft)
 
 
-def draw_play_icon(surface, center, radius, color=WHITE):
+def draw_play_icon(surface, center, radius, color=INK):
     cx, cy = center
     points = [
         (cx - radius // 4, cy - radius // 2),
@@ -241,7 +216,7 @@ def draw_play_icon(surface, center, radius, color=WHITE):
     pygame.draw.polygon(surface, color, points)
 
 
-def draw_gear_icon(surface, center, radius, color=WHITE):
+def draw_gear_icon(surface, center, radius, color=TEXT):
     cx, cy = center
     for angle in range(0, 360, 45):
         radians = math.radians(angle)
@@ -251,47 +226,11 @@ def draw_gear_icon(surface, center, radius, color=WHITE):
         end = (cx + math.cos(radians) * outer, cy + math.sin(radians) * outer)
         pygame.draw.line(surface, color, start, end, max(3, radius // 4))
     pygame.draw.circle(surface, color, center, int(radius * 0.68))
-    pygame.draw.circle(surface, BLACK, center, int(radius * 0.3))
+    pygame.draw.circle(surface, INK, center, int(radius * 0.3))
 
 
-def draw_focus_highlight(surface, rect):
-    pygame.draw.rect(surface, GOLD, rect.inflate(14, 14), 4, border_radius=12)
-
-
-class FocusItem:
-    def __init__(self, rect, label, font, action=None):
-        self.rect = rect
-        self.label = label
-        self.action = action or (lambda: None)
-        self.label_surf = font.render(label, True, WHITE)
-
-
-class Focus:
-    """Remember which button keyboard or mouse is using."""
-
-    def __init__(self, items, neighbors, initial=0):
-        self.items = items
-        self.neighbors = neighbors
-        self.index = initial
-
-    @property
-    def current(self):
-        return self.items[self.index]
-
-    def move(self, direction):
-        target = self.neighbors.get(self.index, {}).get(direction)
-        if target is not None:
-            self.index = target
-
-    def hover(self, pos):
-        for index, item in enumerate(self.items):
-            if item.rect.collidepoint(pos):
-                self.index = index
-                return True
-        return False
-
-    def activate(self):
-        return self.current.action()
+def draw_hover_highlight(surface, rect):
+    pygame.draw.rect(surface, ACCENT, rect.inflate(14, 14), 4, border_radius=12)
 
 
 def build_brick_wall(size):
@@ -301,18 +240,17 @@ def build_brick_wall(size):
     wall_width = min(WALL_WIDTH, width)
     left = width - wall_width
     pygame.draw.rect(wall, WALL_BASE, (left, 0, wall_width, height))
-
     brick_height = 32
     brick_width = 64
     for row, y in enumerate(range(0, height, brick_height)):
         offset = 0 if row % 2 == 0 else brick_width // 2
-        pygame.draw.line(wall, BLACK, (left, y), (width, y), 3)
+        pygame.draw.line(wall, INK, (left, y), (width, y), 3)
         for column, x in enumerate(range(left - brick_width + offset, width, brick_width)):
             brick_left = max(left + 2, x + 2)
             brick_right = min(width - 2, x + brick_width - 2)
             if brick_right <= brick_left:
                 continue
-            color = (DARK_BRICK, BRICK_RED, BRICK_HIGHLIGHT)[(row + column) % 3]
+            color = (BRICK_DARK, BRICK, BRICK_LIGHT)[(row + column) % 3]
             pygame.draw.rect(wall, color, (brick_left, y + 2, brick_right - brick_left, brick_height - 4))
             pygame.draw.line(
                 wall,
@@ -322,9 +260,8 @@ def build_brick_wall(size):
                 1,
             )
         for seam_x in range(left + offset, width, brick_width):
-            pygame.draw.line(wall, BLACK, (seam_x, y), (seam_x, min(height, y + brick_height)), 3)
-
-    pygame.draw.rect(wall, BLACK, (left, 0, wall_width, height), 2)
+            pygame.draw.line(wall, INK, (seam_x, y), (seam_x, min(height, y + brick_height)), 3)
+    pygame.draw.rect(wall, INK, (left, 0, wall_width, height), 2)
     return wall
 
 
@@ -332,18 +269,18 @@ BRICK_WALL = build_brick_wall((WIDTH, PLAYFIELD_HEIGHT))
 
 
 def draw_field(surface):
-    surface.fill(GREEN)
+    surface.fill(GRASS)
     for y in range(0, PLAYFIELD_HEIGHT, CELL):
-        pygame.draw.line(surface, BLACK, (0, y), (WIDTH, y), 1)
+        pygame.draw.line(surface, INK, (0, y), (WIDTH, y), 1)
     for x in range(0, WIDTH + 1, CELL):
-        pygame.draw.line(surface, BLACK, (x, 0), (x, PLAYFIELD_HEIGHT), 1)
+        pygame.draw.line(surface, INK, (x, 0), (x, PLAYFIELD_HEIGHT), 1)
 
 
 def draw_path(surface):
     for col, row in PATH_CELLS:
         rect = pygame.Rect(col * CELL, row * CELL, CELL, CELL)
-        pygame.draw.rect(surface, PATH, rect)
-        pygame.draw.rect(surface, BLACK, rect, 1)
+        pygame.draw.rect(surface, ROAD, rect)
+        pygame.draw.rect(surface, INK, rect, 1)
 
 
 class Enemy:
@@ -383,28 +320,25 @@ class Enemy:
         if not self.alive:
             return
         center = (int(self.x), int(self.y))
-
         if self.kind == "mcqueen":
-            # Fast enemies are triangles and use a darker red than normal enemies.
-            color = (155, 0, 0)
+            color = ENEMY_FAST
             points = [
                 (center[0], center[1] - 17),
                 (center[0] - 15, center[1] + 12),
                 (center[0] + 15, center[1] + 12),
             ]
             pygame.draw.polygon(surface, color, points)
-            pygame.draw.polygon(surface, BLACK, points, 2)
+            pygame.draw.polygon(surface, INK, points, 2)
         else:
-            pygame.draw.circle(surface, RED, center, 15)
-            pygame.draw.circle(surface, (247, 124, 92), center, 9)
-
+            pygame.draw.circle(surface, DANGER, center, 15)
+            pygame.draw.circle(surface, ENEMY_CORE, center, 9)
         bar = pygame.Rect(int(self.x - 12), int(self.y - 25), 24, 4)
-        pygame.draw.rect(surface, BLACK, bar.inflate(2, 2))
-        pygame.draw.rect(surface, GREEN, (bar.x, bar.y, int(bar.width * max(0, self.hp / self.max_hp)), bar.height))
+        pygame.draw.rect(surface, INK, bar.inflate(2, 2))
+        pygame.draw.rect(surface, HEALTH, (bar.x, bar.y, int(bar.width * max(0, self.hp / self.max_hp)), bar.height))
 
 
 class Projectile:
-    def __init__(self, x, y, target, damage, *, piercing=False, size=3, vx=0, vy=0, color=GOLD, max_range=None):
+    def __init__(self, x, y, target, damage, *, piercing=False, size=3, vx=0, vy=0, color=ACCENT, max_range=None):
         self.x, self.y = x, y
         self.target = target
         self.damage = damage
@@ -507,7 +441,7 @@ class Tower:
                         size=6,
                         vx=math.cos(angle),
                         vy=math.sin(angle),
-                        color=ORANGE,
+                        color=TOWER_CANNON,
                         max_range=self.stats["range"],
                     )
                 )
@@ -517,8 +451,8 @@ class Tower:
     def draw(self, surface, show_range=False):
         rect = pygame.Rect(self.col * CELL + 4, self.row * CELL + 4, CELL - 8, CELL - 8)
         pygame.draw.rect(surface, self.stats["color"], rect, border_radius=7)
-        pygame.draw.rect(surface, BLACK, rect, 2, border_radius=7)
-        pygame.draw.circle(surface, WHITE, (self.x, self.y), 3)
+        pygame.draw.rect(surface, INK, rect, 2, border_radius=7)
+        pygame.draw.circle(surface, TEXT, (self.x, self.y), 3)
         if show_range:
             draw_tower_range(surface, (self.x, self.y), self.stats)
 
@@ -527,15 +461,7 @@ class Game:
     """Rules and objects for one game."""
 
     def __init__(self):
-        self.events = []
         self.reset()
-
-    def emit(self, name):
-        self.events.append(name)
-
-    def drain_events(self):
-        events, self.events = self.events, []
-        return events
 
     def reset(self):
         self.selected = "rapid"
@@ -548,39 +474,29 @@ class Game:
         self.spawn_q = 0
         self.spawn_timer = 0
         self.wave_active = False
-        self.wave_conf = None
         self.hover_cell = None
         self.delete_cell = None
         self.game_over = False
         self.pending_cell = None
-        # ДОБАВЛЕНО: таймер до автостарта следующей волны (в кадрах), None — таймер не идёт.
         self.next_wave_timer = None
-        for name in ("gold_changed", "lives_changed", "wave_changed"):
-            self.emit(name)
 
-    # ДОБАВЛЕНО: новую волну можно запускать, как только последний враг текущей уже заспавнился.
     @property
     def can_start_wave(self):
         return not self.game_over and self.spawn_q == 0
 
     def start_wave(self):
-        # ИЗМЕНЕНО: вместо проверки `self.wave_active` теперь проверяется can_start_wave.
         if not self.can_start_wave:
             return
-        # ДОБАВЛЕНО: ручной или автоматический старт сбрасывает таймер.
         self.next_wave_timer = None
         self.wave += 1
         scale = 1 + (self.wave - 1) * 0.35
-        self.wave_conf = {
-            "count": int(5 * scale),
-            "hp": int(50 * scale),
-            "speed": 1.5 + (self.wave - 1) * 0.05,
-            "gold": int(8 + (self.wave - 1) * 1.5),
-        }
-        self.spawn_q = self.wave_conf["count"]
+        self.wave_count = int(5 * scale)
+        self.wave_hp = int(50 * scale)
+        self.wave_speed = 1.5 + (self.wave - 1) * 0.05
+        self.wave_gold = int(8 + (self.wave - 1) * 1.5)
+        self.spawn_q = self.wave_count
         self.spawn_timer = 0
         self.wave_active = True
-        self.emit("wave_changed")
 
     def update(self):
         if self.game_over:
@@ -588,54 +504,38 @@ class Game:
         if self.wave_active and self.spawn_q:
             self.spawn_timer -= 1
             if self.spawn_timer <= 0:
-                config = self.wave_conf
-                spawn_number = config["count"] - self.spawn_q + 1
-                kind = "mcqueen" if spawn_number % 5 == 0 else "normal"
-                self.enemies.append(
-                    Enemy(config["hp"], config["speed"], config["gold"], kind)
-                )
+                number = self.wave_count - self.spawn_q + 1
+                kind = "mcqueen" if number % 5 == 0 else "normal"
+                self.enemies.append(Enemy(self.wave_hp, self.wave_speed, self.wave_gold, kind))
                 self.spawn_q -= 1
                 self.spawn_timer = 25
-
         for enemy in self.enemies:
             enemy.update()
             if enemy.reached_end:
                 self.lives -= enemy.life_damage
-                self.emit("lives_changed")
-
         for tower in self.towers:
             self.projectiles.extend(tower.update(self.enemies))
         for projectile in self.projectiles:
             projectile.update(self.enemies if projectile.piercing else None)
         self.projectiles = [projectile for projectile in self.projectiles if projectile.alive]
-
-        gold_gained = False
         survivors = []
         for enemy in self.enemies:
             if enemy.alive:
                 survivors.append(enemy)
             elif not enemy.reached_end:
                 self.gold += enemy.gold
-                gold_gained = True
-        if gold_gained:
-            self.emit("gold_changed")
         self.enemies = survivors
-
-        # ДОБАВЛЕНО: отсчёт таймера; по истечении времени волна стартует автоматически.
         if self.next_wave_timer is not None:
             self.next_wave_timer -= 1
             if self.next_wave_timer <= 0:
                 self.start_wave()
-
         if self.wave_active and self.spawn_q == 0 and not self.enemies:
             self.wave_active = False
-            # ДОБАВЛЕНО: последний враг волны мёртв — запускаем таймер на 15 секунд.
             self.next_wave_timer = NEXT_WAVE_DELAY
         if self.lives <= 0:
             self.game_over = True
             self.pending_cell = None
             self.delete_cell = None
-            # ДОБАВЛЕНО: при проигрыше таймер отключается.
             self.next_wave_timer = None
 
     def _buildable_cell(self, cell):
@@ -651,13 +551,12 @@ class Game:
     def handle_click(self, position, button):
         if button != 1 or self.game_over:
             return
-        # ИЗМЕНЕНО: вместо `not self.wave_active` теперь проверяется can_start_wave.
         if self.can_start_wave and math.hypot(position[0] - 44, position[1] - 260) <= 26:
             self.start_wave()
             self.delete_cell = None
             return
         if position[1] >= HEIGHT - UI_BAR_HEIGHT:
-            for kind, rect in shop_cards():
+            for kind, rect in SHOP_CARDS:
                 if rect.collidepoint(position):
                     self.selected = kind
             self.delete_cell = None
@@ -666,11 +565,12 @@ class Game:
             col, row = self.delete_cell
             center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
             if math.hypot(position[0] - center[0], position[1] - center[1]) <= 28:
-                self.towers = [tower for tower in self.towers if (tower.col, tower.row) != (col, row)]
+                tower = next(tower for tower in self.towers if (tower.col, tower.row) == (col, row))
+                self.gold += TOWER_TYPES[tower.kind]["cost"] // 2
+                self.towers.remove(tower)
                 self.delete_cell = None
                 return
             self.delete_cell = None
-
         col, row = position[0] // CELL, position[1] // CELL
         cell = (col, row)
         for tower in self.towers:
@@ -683,13 +583,11 @@ class Game:
         if self.pending_cell != cell:
             self.pending_cell = cell
             return
-
         cost = TOWER_TYPES[self.selected]["cost"]
         if self.gold >= cost:
             self.towers.append(Tower(col, row, self.selected))
             self.gold -= cost
             self.pending_cell = None
-            self.emit("gold_changed")
 
     def draw(self, surface):
         draw_field(surface)
@@ -712,20 +610,20 @@ class Game:
         self._draw_delete_menu(surface)
         if self.game_over:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill((5, 10, 10, 185))
+            overlay.fill((*OVERLAY, 185))
             surface.blit(overlay, (0, 0))
-            draw_panel(surface, pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 - 75, 300, 150), PANEL_LIGHT, 245, RED)
-            draw_centered_text(surface, minecraft_font(28), "GAME OVER", RED, (WIDTH // 2, HEIGHT // 2 - 22))
-            draw_centered_text(surface, minecraft_font(24), "Press R or Enter to restart", WHITE, (WIDTH // 2, HEIGHT // 2 + 20))
+            draw_panel(surface, pygame.Rect(WIDTH // 2 - 300, HEIGHT // 2 - 75, 600, 150), PANEL, 245, DANGER)
+            draw_centered_text(surface, minecraft_font(28), "GAME OVER", DANGER_TEXT, (WIDTH // 2, HEIGHT // 2 - 22))
+            draw_centered_text(surface, minecraft_font(24), "Click to restart  ·  Esc for menu", TEXT, (WIDTH // 2, HEIGHT // 2 + 20))
 
     def _draw_delete_menu(self, surface):
         if not self.delete_cell:
             return
         col, row = self.delete_cell
         center = (col * CELL + CELL // 2, row * CELL + CELL // 2)
-        pygame.draw.circle(surface, RED, center, 28)
-        pygame.draw.circle(surface, WHITE, center, 28, 2)
-        draw_centered_text(surface, minecraft_font(12), "DELETE", WHITE, center, None)
+        pygame.draw.circle(surface, DANGER, center, 28)
+        pygame.draw.circle(surface, TEXT, center, 28, 2)
+        draw_centered_text(surface, minecraft_font(12), "DELETE", TEXT, center)
 
 
 class Hud:
@@ -734,75 +632,49 @@ class Hud:
     def __init__(self, font, small_font):
         self.font = font
         self.small_font = small_font
-        self.gold_surf = None
-        self.lives_surf = None
-        self.wave_surf = None
-        self.start_surf = small_font.render("START", True, WHITE)
-        self.gold_pos = Layout.anchor_point(SCREEN_RECT, ("left", "bottom"), (SAFE_MARGIN, -80))
-        self.lives_pos = Layout.anchor_point(SCREEN_RECT, ("left", "bottom"), (SAFE_MARGIN, -40))
-        self.wave_pos = Layout.anchor_point(SCREEN_RECT, ("left", "bottom"), (220, -80))
-        self.cards = {kind: self._make_card(kind, info) for kind, info in TOWER_TYPES.items()}
+        self.start_surf = small_font.render("START", True, TEXT)
+        self.gold_pos = (SAFE_MARGIN, HEIGHT - 80)
+        self.lives_pos = (SAFE_MARGIN, HEIGHT - 40)
+        self.wave_pos = (220, HEIGHT - 80)
+        self.cards = {kind: self._make_card(info) for kind, info in TOWER_TYPES.items()}
 
-    def _make_card(self, kind, info):
+    def _make_card(self, info):
         card = pygame.Surface(SHOP_CARD_SIZE)
         card.fill(info["color"])
-        card.blit(self.small_font.render(info["name"], True, BLACK), (6, 6))
-        card.blit(self.small_font.render(str(info["cost"]), True, BLACK), (6, 44))
+        card.blit(self.small_font.render(info["name"], True, INK), (6, 6))
+        card.blit(self.small_font.render(str(info["cost"]), True, INK), (6, 44))
         return card
 
-    def handle(self, events, gold, lives, wave):
-        for name in events:
-            if name == "gold_changed":
-                self.gold_surf = self.font.render(f"Gold: {gold}", True, GOLD)
-            elif name == "lives_changed":
-                self.lives_surf = self.font.render(f"Lives: {lives}", True, WHITE)
-            elif name == "wave_changed":
-                self.wave_surf = self.font.render(f"Wave: {wave}", True, WHITE)
-
-    def draw(self, surface, selected):
-        if self.gold_surf:
-            surface.blit(self.gold_surf, self.gold_pos)
-        if self.lives_surf:
-            surface.blit(self.lives_surf, self.lives_pos)
-        if self.wave_surf:
-            surface.blit(self.wave_surf, self.wave_pos)
-        for kind, rect in shop_cards():
+    def draw(self, surface, game):
+        surface.blit(self.font.render(f"Gold: {game.gold}", True, ACCENT), self.gold_pos)
+        surface.blit(self.font.render(f"Lives: {max(0, game.lives)}", True, TEXT), self.lives_pos)
+        surface.blit(self.font.render(f"Wave: {game.wave}", True, TEXT), self.wave_pos)
+        for kind, rect in SHOP_CARDS:
             surface.blit(self.cards[kind], rect)
-            border = WHITE if kind == selected else TOWER_TYPES[kind]["color"]
+            border = ACCENT if kind == game.selected else TOWER_TYPES[kind]["color"]
             pygame.draw.rect(surface, border, rect, 2)
 
 
 class App:
     def __init__(self, screen=None):
         self.canvas = pygame.Surface((WIDTH, HEIGHT))
-        self.screen = screen
-        if screen is None:
-            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+        self.screen = screen or pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self.running = True
         self.volume = 60
         self.dragging_volume = False
         self.mouse_pos = (0, 0)
-
         self.title_font = minecraft_font(42)
         self.button_font = minecraft_font(18)
         self.font = minecraft_font(16)
         self.hud = Hud(minecraft_font(24), minecraft_font(10))
-
-        # Layout-derived control rects (anchored, not hardcoded).
-        self.play_button = Layout.place(SCREEN_RECT, ("center", "middle"), 124, 124, offset=(0, -84))
-        self.settings_button = Layout.place(SCREEN_RECT, ("left", "middle"), 64, 64, offset=(64, 0))
-        self.back_button = pygame.Rect(
-            *Layout.anchor_point(SCREEN_RECT, ("left", "top"), (58, 22)), 116, 44
-        )
-        self.volume_track = Layout.place(settings_panel_rect(), ("center", "top"), 480, 8, offset=(0, 182))
-        self.pause_items = Layout.vbox(SCREEN_RECT, 3, 260, 52, 16)
-
-        # Screens as a stack: push (pause over game), pop (resume).
+        self.play_button = PLAY_BUTTON
+        self.settings_button = SETTINGS_BUTTON
+        self.back_button = BACK_BUTTON
+        self.volume_track = VOLUME_TRACK
+        self.volume_hit = VOLUME_HIT
+        self.pause_items = pause_items()
         self.screens = [ScreenState.MENU]
-        self.focus = None
-        self._rebuild_focus()
-
         self.game = Game()
 
     @property
@@ -812,73 +684,29 @@ class App:
     @state.setter
     def state(self, screen):
         self.screens = [screen]
-        self._rebuild_focus()
 
     def push(self, screen):
         self.screens.append(screen)
-        self._rebuild_focus()
 
     def pop(self):
         if len(self.screens) > 1:
             self.screens.pop()
-        self._rebuild_focus()
 
     def switch(self, screen):
         self.state = screen
 
-    def _rebuild_focus(self):
-        item_font = self.button_font
-        if self.state is ScreenState.MENU:
-            items = [
-                FocusItem(self.play_button, "PLAY", item_font, lambda: self.push(ScreenState.GAME)),
-                FocusItem(self.settings_button, "SETTINGS", item_font, lambda: self.push(ScreenState.SETTINGS)),
-            ]
-            self.focus = Focus(items, {0: {"down": 1, "right": 1}, 1: {"up": 0, "left": 0}})
-        elif self.state is ScreenState.SETTINGS:
-            track_hit = self.volume_track.inflate(40, 30)
-            items = [
-                FocusItem(track_hit, "VOLUME", item_font),
-                FocusItem(self.back_button, "BACK", item_font, lambda: self.pop()),
-            ]
-            self.focus = Focus(items, {0: {"down": 1, "right": 1}, 1: {"up": 0, "left": 0}})
-        elif self.state is ScreenState.PAUSE:
-            resume, settings, menu = self.pause_items
-            items = [
-                FocusItem(resume, "RESUME", item_font, lambda: self.pop()),
-                FocusItem(settings, "SETTINGS", item_font, lambda: self.push(ScreenState.SETTINGS)),
-                FocusItem(menu, "MAIN MENU", item_font, lambda: self.switch(ScreenState.MENU)),
-            ]
-            self.focus = Focus(items, {0: {"down": 1}, 1: {"up": 0, "down": 2}, 2: {"up": 1}})
-        else:
-            self.focus = None
-
     def set_volume(self, value):
-        self.volume = int(clamp(int(value), 0, 100))
+        self.volume = max(0, min(100, int(value)))
 
     def set_volume_from_x(self, x):
-        ratio = (x - self.volume_track.left) / self.volume_track.width
-        self.set_volume(round(clamp(ratio, 0, 1) * 100))
-
-    @staticmethod
-    def _is_activate(key):
-        return key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE, pygame.K_j)
-
-    def _move_focus(self, key):
-        direction = DIRECTION_KEYS.get(key)
-        if direction:
-            self.focus.move(direction)
-        elif self._is_activate(key):
-            self.focus.activate()
-
-    def _click_focus(self, pos):
-        if self.focus.hover(pos):
-            self.focus.activate()
+        track = self.volume_track
+        self.set_volume(round((x - track.left) / track.width * 100))
 
     def _to_virtual(self, pos):
         window = pygame.display.get_surface()
         if window is None:
             return pos
-        dst = letterbox_rect(window.get_size(), (WIDTH, HEIGHT))
+        dst = letterbox_rect(window.get_size())
         scale = dst.width / WIDTH
         return ((pos[0] - dst.x) / scale, (pos[1] - dst.y) / scale)
 
@@ -894,8 +722,6 @@ class App:
             self.mouse_pos = self._to_virtual(event.pos)
             if self.state is ScreenState.SETTINGS and self.dragging_volume:
                 self.set_volume_from_x(self.mouse_pos[0])
-            elif self.focus is not None:
-                self.focus.hover(self.mouse_pos)
             elif self.state is ScreenState.GAME:
                 col, row = self.mouse_pos[0] // CELL, self.mouse_pos[1] // CELL
                 self.game.hover_cell = (
@@ -904,67 +730,54 @@ class App:
                     else None
                 )
             return
-        if self.state is ScreenState.MENU:
-            self._handle_focus_screen(event)
-        elif self.state is ScreenState.SETTINGS:
-            self._handle_settings_event(event)
-        elif self.state is ScreenState.PAUSE:
-            self._handle_focus_screen(event, esc_back=True)
-        else:
-            self._handle_game_event(event)
-
-    def _handle_focus_screen(self, event, esc_back=False):
-        if event.type == pygame.KEYDOWN:
-            if esc_back and event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
-                self.pop()
-            else:
-                self._move_focus(event.key)
-        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            self._click_focus(self._to_virtual(event.pos))
-
-    def _handle_settings_event(self, event):
-        if event.type == pygame.KEYDOWN:
-            if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
-                self.dragging_volume = False
-                self.pop()
-            elif self.focus.index == 0 and event.key in (
-                pygame.K_LEFT, pygame.K_a, pygame.K_RIGHT, pygame.K_d
-            ):
-                delta = 5 if event.key in (pygame.K_RIGHT, pygame.K_d) else -5
-                self.set_volume(self.volume + delta)
-            else:
-                self._move_focus(event.key)
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self.dragging_volume = False
-        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            pos = self._to_virtual(event.pos)
-            self.focus.hover(pos)
-            if self.back_button.collidepoint(pos):
-                self.dragging_volume = False
-                self.pop()
-            elif self.volume_track.inflate(40, 30).collidepoint(pos):
-                self.dragging_volume = True
-                self.set_volume_from_x(pos[0])
-
-    def _handle_game_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                if self.game.game_over:
-                    self.switch(ScreenState.MENU)
-                else:
-                    self.push(ScreenState.PAUSE)
-            elif event.key == pygame.K_SPACE:
-                # start_wave сам проверяет can_start_wave, поэтому пробел тоже работает
-                # раньше завершения волны (ДОБАВЛЕНО через изменение start_wave).
+                self._escape()
+            elif event.key == pygame.K_SPACE and self.state is ScreenState.GAME:
                 self.game.start_wave()
-            elif event.key == pygame.K_1:
-                self.game.selected = "rapid"
-            elif event.key == pygame.K_2:
-                self.game.selected = "cannon"
-            elif event.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER) and self.game.game_over:
-                self.game.reset()
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            self.game.handle_click(self._to_virtual(event.pos), event.button)
+            return
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self._click(self._to_virtual(event.pos))
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self.dragging_volume = False
+
+    def _escape(self):
+        """Esc opens the pause menu in game, and backs out of any menu."""
+        if self.state is ScreenState.GAME:
+            if self.game.game_over:
+                self.switch(ScreenState.MENU)
+            else:
+                self.push(ScreenState.PAUSE)
+        elif self.state in (ScreenState.PAUSE, ScreenState.SETTINGS):
+            self.dragging_volume = False
+            self.pop()
+
+    def _click(self, pos):
+        if self.state is ScreenState.MENU:
+            if self.play_button.collidepoint(pos):
+                if self.game.game_over:
+                    self.game.reset()
+                self.push(ScreenState.GAME)
+            elif self.settings_button.collidepoint(pos):
+                self.push(ScreenState.SETTINGS)
+        elif self.state is ScreenState.SETTINGS:
+            if self.back_button.collidepoint(pos):
+                self.pop()
+            elif self.volume_hit.collidepoint(pos):
+                self.dragging_volume = True
+                self.set_volume_from_x(pos[0])
+        elif self.state is ScreenState.PAUSE:
+            resume, settings, menu = self.pause_items
+            if resume.collidepoint(pos):
+                self.pop()
+            elif settings.collidepoint(pos):
+                self.push(ScreenState.SETTINGS)
+            elif menu.collidepoint(pos):
+                self.switch(ScreenState.MENU)
+        elif self.game.game_over:
+            self.game.reset()
+        else:
+            self.game.handle_click(pos, 1)
 
     def update(self):
         if self.state is ScreenState.GAME:
@@ -991,7 +804,7 @@ class App:
             window.blit(self.canvas, (0, 0))
         else:
             window.fill(LETTERBOX)
-            dst = letterbox_rect(window.get_size(), (WIDTH, HEIGHT))
+            dst = letterbox_rect(window.get_size())
             window.blit(pygame.transform.smoothscale(self.canvas, dst.size), dst)
         if window is self.screen:
             pygame.display.flip()
@@ -1007,90 +820,80 @@ class App:
             frames += 1
 
     def _draw_menu(self, surface):
-        safe = safe_rect(SCREEN_RECT)
-        draw_vertical_gradient(surface, (11, 29, 32), (20, 62, 54))
-        circle_center = Layout.anchor_point(safe, ("right", "top"), (-65, 70))
-        pygame.draw.circle(surface, (29, 100, 76), circle_center, 145, 2)
-        pygame.draw.circle(surface, (29, 100, 76), circle_center, 105, 1)
-        draw_centered_text(surface, self.title_font, "TOWER DEFENCE", WHITE, Layout.anchor_point(safe, ("center", "top"), (0, 97)))
-        draw_centered_text(surface, self.font, "BUILD  ·  DEFEND  ·  SURVIVE", GRAY, Layout.anchor_point(safe, ("center", "top"), (0, 142)), None)
-
-        focused_play = self.focus.current is self.focus.items[0]
+        draw_vertical_gradient(surface, BG_TOP, BG_BOTTOM)
+        draw_centered_text(surface, self.title_font, "TOWER DEFENCE", TEXT, MENU_TITLE_POS)
+        draw_centered_text(surface, self.font, "BUILD  ·  DEFEND  ·  SURVIVE", TEXT_MUTED, MENU_SUBTITLE_POS)
         center = self.play_button.center
-        if focused_play:
-            pygame.draw.circle(surface, GOLD, center, 66, 4)
-        pygame.draw.circle(surface, (4, 12, 12), (center[0] + 6, center[1] + 8), 67)
-        pygame.draw.circle(surface, GREEN_HOVER if self.play_button.collidepoint(self.mouse_pos) else GREEN, center, 62)
-        pygame.draw.circle(surface, WHITE, center, 62, 2)
+        pygame.draw.circle(
+            surface, ACCENT_HOVER if self.play_button.collidepoint(self.mouse_pos) else ACCENT, center, 62
+        )
+        pygame.draw.circle(surface, INK, center, 62, 2)
         draw_play_icon(surface, center, 34)
-        draw_centered_text(surface, self.button_font, "PLAY", WHITE, (center[0], center[1] + 90), None)
-
+        draw_centered_text(surface, self.button_font, "PLAY", TEXT, (center[0], center[1] + 90))
         settings_hovered = self.settings_button.collidepoint(self.mouse_pos)
-        if self.focus.current is self.focus.items[1]:
-            draw_focus_highlight(surface, self.settings_button)
-        pygame.draw.rect(surface, GREEN_DARK if settings_hovered else BLACK, self.settings_button, border_radius=14)
-        pygame.draw.rect(surface, GREEN if settings_hovered else PANEL_LIGHT, self.settings_button, 2, border_radius=14)
+        if settings_hovered:
+            draw_hover_highlight(surface, self.settings_button)
+        pygame.draw.rect(surface, PANEL_LIGHT if settings_hovered else INK, self.settings_button, border_radius=14)
+        pygame.draw.rect(
+            surface, ACCENT if settings_hovered else PANEL_BORDER, self.settings_button, 2, border_radius=14
+        )
         draw_gear_icon(surface, self.settings_button.center, 20)
-        draw_text(surface, self.font, "SETTINGS", GRAY, (self.settings_button.right + 14, self.settings_button.centery - 8), None)
-        draw_centered_text(surface, self.font, "Press the play button to enter the battlefield", GRAY, Layout.anchor_point(safe, ("center", "bottom"), (0, -42)), None)
+        draw_centered_text(surface, self.font, "SETTINGS", TEXT_MUTED, MENU_SETTINGS_POS)
+        draw_centered_text(
+            surface, self.font, "Press the play button to enter the battlefield", TEXT_MUTED, MENU_HINT_POS
+        )
 
     def _draw_settings(self, surface):
-        safe = safe_rect(SCREEN_RECT)
-        draw_vertical_gradient(surface, (11, 29, 32), (20, 62, 54))
-        panel = settings_panel_rect()
-        draw_panel(surface, panel, BLACK, 235, PANEL_LIGHT)
-        draw_text(surface, self.title_font, "SETTINGS", WHITE, Layout.anchor_point(panel, ("left", "top"), (32, 40)))
-        draw_text(surface, self.font, "AUDIO", GRAY, Layout.anchor_point(panel, ("left", "top"), (32, 130)), None)
-        draw_text(surface, self.font, f"MASTER VOLUME   {self.volume}%", WHITE, Layout.anchor_point(panel, ("left", "top"), (32, 154)), None)
+        draw_vertical_gradient(surface, BG_TOP, BG_BOTTOM)
+        draw_panel(surface, SETTINGS_PANEL, PANEL, 235, PANEL_BORDER)
+        draw_text(surface, self.title_font, "SETTINGS", TEXT, SETTINGS_TITLE_POS)
+        draw_text(surface, self.font, "AUDIO", TEXT_MUTED, SETTINGS_AUDIO_POS)
+        draw_text(surface, self.font, f"MASTER VOLUME   {self.volume}%", TEXT, SETTINGS_VOLUME_POS)
         track = self.volume_track
-        if self.focus.current is self.focus.items[0]:
-            draw_focus_highlight(surface, track.inflate(40, 30))
-        pygame.draw.rect(surface, DARK_GRAY, track.inflate(0, 10), border_radius=8)
+        if self.dragging_volume or self.volume_hit.collidepoint(self.mouse_pos):
+            draw_hover_highlight(surface, self.volume_hit)
         fraction = track.width * self.volume // 100
-        pygame.draw.rect(surface, GREEN, (track.left, track.top, fraction, track.height), border_radius=8)
-        knob_x = track.left + fraction
-        pygame.draw.circle(surface, WHITE, (knob_x, track.centery), 12)
-        pygame.draw.circle(surface, GREEN, (knob_x, track.centery), 6)
-        if self.focus.current is self.focus.items[1]:
-            draw_focus_highlight(surface, self.back_button)
+        pygame.draw.rect(surface, PANEL_BORDER, track.inflate(0, 10), border_radius=8)
+        pygame.draw.rect(surface, ACCENT, (track.left, track.top, fraction, track.height), border_radius=8)
+        knob = (track.left + fraction, track.centery)
+        pygame.draw.circle(surface, TEXT, knob, 12)
+        pygame.draw.circle(surface, ACCENT_DARK, knob, 6)
+        if self.back_button.collidepoint(self.mouse_pos):
+            draw_hover_highlight(surface, self.back_button)
         hovered = self.back_button.collidepoint(self.mouse_pos)
-        pygame.draw.rect(surface, GREEN_DARK if hovered else PANEL_LIGHT, self.back_button, border_radius=10)
-        pygame.draw.rect(surface, GREEN if hovered else GRAY, self.back_button, 1, border_radius=10)
-        draw_text(surface, self.font, "‹  BACK", WHITE, (self.back_button.x + 18, self.back_button.y + 12), None)
-        draw_centered_text(surface, self.font, "← → adjust · ↑ ↓ move · Enter select · Esc back", GRAY, Layout.anchor_point(safe, ("center", "bottom"), (0, -24)), None)
+        pygame.draw.rect(surface, PANEL_LIGHT if hovered else INK, self.back_button, border_radius=10)
+        pygame.draw.rect(surface, ACCENT if hovered else PANEL_BORDER, self.back_button, 1, border_radius=10)
+        draw_text(surface, self.font, "<-  BACK", TEXT, (self.back_button.x + 18, self.back_button.y + 12))
+        draw_centered_text(
+            surface, self.font, "Drag the slider to set the volume  ·  Esc back", TEXT_MUTED, SETTINGS_HINT_POS
+        )
 
     def _draw_pause(self, surface):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((5, 10, 10, 160))
+        overlay.fill((*OVERLAY, 160))
         surface.blit(overlay, (0, 0))
-        panel = Layout.place(SCREEN_RECT, ("center", "middle"), 340, 220)
-        draw_panel(surface, panel, PANEL_LIGHT, 245, GOLD)
-        draw_centered_text(surface, self.title_font, "PAUSED", WHITE, (WIDTH // 2, panel.top + 40))
-        for item in self.focus.items:
-            if item is self.focus.current:
-                draw_focus_highlight(surface, item.rect)
-            pygame.draw.rect(surface, BLACK, item.rect, border_radius=8)
-            pygame.draw.rect(surface, GRAY, item.rect, 1, border_radius=8)
-            label_pos = (item.rect.centerx - item.label_surf.get_width() // 2, item.rect.centery - item.label_surf.get_height() // 2)
-            surface.blit(item.label_surf, label_pos)
+        panel = PAUSE_PANEL
+        draw_panel(surface, panel, PANEL_LIGHT, 245, ACCENT)
+        draw_centered_text(surface, self.title_font, "PAUSED", TEXT, (WIDTH // 2, panel.top + 40))
+        for rect, label in zip(self.pause_items, PAUSE_LABELS):
+            if rect.collidepoint(self.mouse_pos):
+                draw_hover_highlight(surface, rect)
+            pygame.draw.rect(surface, PANEL_LIGHT if rect.collidepoint(self.mouse_pos) else INK, rect, border_radius=8)
+            pygame.draw.rect(surface, TEXT_MUTED, rect, 1, border_radius=8)
+            draw_centered_text(surface, self.button_font, label, TEXT, rect.center)
 
     def _draw_game_ui(self, surface):
-        bar = pygame.Rect(0, HEIGHT - UI_BAR_HEIGHT, WIDTH, UI_BAR_HEIGHT)
-        pygame.draw.rect(surface, BLACK, bar)
-        self.hud.handle(self.game.drain_events(), self.game.gold, self.game.lives, self.game.wave)
-        self.hud.draw(surface, self.game.selected)
-        # ИЗМЕНЕНО: кнопка START показывается по can_start_wave (а не по `not wave_active`).
+        pygame.draw.rect(surface, INK, (0, PLAYFIELD_HEIGHT, WIDTH, UI_BAR_HEIGHT))
+        self.hud.draw(surface, self.game)
         if self.game.can_start_wave:
             center = (44, 260)
-            pygame.draw.circle(surface, GREEN, center, 28)
-            pygame.draw.circle(surface, WHITE, center, 28, 2)
+            pygame.draw.circle(surface, ACCENT, center, 28)
+            pygame.draw.circle(surface, INK, center, 28, 2)
             draw_play_icon(surface, center, 20)
             surface.blit(self.hud.start_surf, (79, 250))
-            # ДОБАВЛЕНО: таймер до автостарта волны над кнопкой (в секундах, округление вверх).
             if self.game.next_wave_timer is not None:
                 seconds = math.ceil(self.game.next_wave_timer / FPS)
-                draw_centered_text(surface, self.button_font, f"{seconds}", GOLD, (center[0], center[1] - 48))
-
+                draw_centered_text(surface, self.button_font, f"{seconds}", ACCENT, (center[0], center[1] - 48))
 
 def main():
     pygame.init()
@@ -1098,7 +901,6 @@ def main():
     app = App()
     app.run()
     pygame.quit()
-
 
 if __name__ == "__main__":
     main()

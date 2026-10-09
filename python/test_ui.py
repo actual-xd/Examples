@@ -11,6 +11,19 @@ import pygame
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 
+def contrast(color, other):
+    def luminance(rgb):
+        channels = []
+        for value in rgb:
+            value = value / 255
+            channels.append(value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4)
+        red, green, blue = channels
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+    high, low = sorted((luminance(color), luminance(other)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
 class UiBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -72,8 +85,9 @@ class UiBehaviorTests(unittest.TestCase):
         self.assertEqual((self.ui.HEIGHT - self.ui.UI_BAR_HEIGHT) % self.ui.CELL, 0)
         self.assertEqual(self.ui.FONT_PATH.name, "Minecraft.otf")
         self.assertTrue(self.ui.FONT_PATH.exists())
-        self.assertEqual(self.ui.PATH, (176, 163, 44))
-        self.assertEqual(self.ui.TOWER_TYPES["rapid"]["color"], (0, 0, 200))
+        self.assertEqual(self.ui.ROAD, (188, 150, 108))
+        self.assertEqual(self.ui.TOWER_TYPES["rapid"]["color"], self.ui.TOWER_RAPID)
+        self.assertEqual(self.ui.TOWER_TYPES["cannon"]["color"], self.ui.TOWER_CANNON)
 
     def test_waypoints_follow_road_cell_centers(self):
         for x, y in self.ui.WAYPOINTS[1:]:
@@ -94,18 +108,15 @@ class UiBehaviorTests(unittest.TestCase):
 
     def test_selected_tower_needs_preview_then_confirmation(self):
         game = self.ui.Game()
+        game.gold = 600
         cards = dict(self.ui.shop_cards())
         game.handle_click(cards["cannon"].center, 1)
         cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
-
         game.handle_click(cell_pos, 1)
-
         self.assertEqual(game.pending_cell, (0, 0))
         self.assertEqual(game.towers, [])
-        self.assertEqual(game.gold, 300)
-
+        self.assertEqual(game.gold, 600)
         game.handle_click(cell_pos, 1)
-
         self.assertEqual([tower.kind for tower in game.towers], ["cannon"])
         self.assertEqual(game.gold, 100)
         self.assertIsNone(game.pending_cell)
@@ -114,25 +125,20 @@ class UiBehaviorTests(unittest.TestCase):
         game = self.ui.Game()
         first = (self.ui.CELL // 2, self.ui.CELL // 2)
         second = (self.ui.CELL + self.ui.CELL // 2, self.ui.CELL // 2)
-
         game.handle_click(first, 1)
         game.handle_click(second, 1)
-
         self.assertEqual(game.pending_cell, (1, 0))
         self.assertEqual(game.towers, [])
-
         game.handle_click(second, 1)
-
         self.assertEqual([(tower.col, tower.row) for tower in game.towers], [(1, 0)])
 
     def test_type_change_updates_pending_purchase(self):
         game = self.ui.Game()
+        game.gold = 600
         cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
         game.handle_click(cell_pos, 1)
-
         game.handle_click(dict(self.ui.shop_cards())["cannon"].center, 1)
         game.handle_click(cell_pos, 1)
-
         self.assertEqual(game.towers[0].kind, "cannon")
         self.assertEqual(game.gold, 100)
 
@@ -141,16 +147,12 @@ class UiBehaviorTests(unittest.TestCase):
         cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
         game.handle_click(cell_pos, 1)
         game.gold = 150
-
         game.handle_click(dict(self.ui.shop_cards())["cannon"].center, 1)
         game.handle_click(cell_pos, 1)
-
         self.assertEqual(game.towers, [])
         self.assertEqual(game.pending_cell, (0, 0))
-
         game.handle_click(dict(self.ui.shop_cards())["rapid"].center, 1)
         game.handle_click(cell_pos, 1)
-
         self.assertEqual(game.towers[0].kind, "rapid")
         self.assertEqual(game.gold, 50)
 
@@ -158,7 +160,6 @@ class UiBehaviorTests(unittest.TestCase):
         game = self.ui.Game()
         cell_pos = (self.ui.CELL // 2, self.ui.CELL // 2)
         game.handle_click(cell_pos, 1)
-
         invalid_positions = [
             self.ui.WAYPOINTS[1],
             (self.ui.WALL_LEFT + 10, 100),
@@ -174,9 +175,7 @@ class UiBehaviorTests(unittest.TestCase):
         existing = self.ui.Tower(2, 0, "rapid")
         game.towers = [existing]
         game.pending_cell = (0, 0)
-
         game.handle_click((existing.x, existing.y), 1)
-
         self.assertIsNone(game.pending_cell)
         self.assertEqual(game.delete_cell, (2, 0))
 
@@ -185,9 +184,7 @@ class UiBehaviorTests(unittest.TestCase):
         game.pending_cell = (0, 0)
         game.delete_cell = (1, 0)
         game.lives = 0
-
         game.update()
-
         self.assertIsNone(game.pending_cell)
         self.assertIsNone(game.delete_cell)
 
@@ -195,37 +192,29 @@ class UiBehaviorTests(unittest.TestCase):
         game = self.ui.Game()
         game.towers = [self.ui.Tower(2, 0, "rapid")]
         game.delete_cell = (2, 0)
-
         game.handle_click((20, 20), 1)
-
         self.assertIsNone(game.delete_cell)
         self.assertEqual(game.pending_cell, (0, 0))
 
     def test_non_left_click_does_not_change_preview(self):
         game = self.ui.Game()
         game.pending_cell = (0, 0)
-
         game.handle_click((60, 20), 2)
         game.handle_click((60, 20), 3)
-
         self.assertEqual(game.pending_cell, (0, 0))
         self.assertEqual(game.towers, [])
 
     def test_starting_wave_keeps_preview(self):
         game = self.ui.Game()
         game.pending_cell = (0, 0)
-
         game.handle_click((44, 260), 1)
-
         self.assertTrue(game.wave_active)
         self.assertEqual(game.pending_cell, (0, 0))
 
     def test_reset_clears_preview(self):
         game = self.ui.Game()
         game.pending_cell = (0, 0)
-
         game.reset()
-
         self.assertIsNone(game.pending_cell)
 
     def test_delete_confirmation_does_not_create_preview(self):
@@ -233,20 +222,44 @@ class UiBehaviorTests(unittest.TestCase):
         tower = self.ui.Tower(2, 0, "rapid")
         game.towers = [tower]
         game.delete_cell = (2, 0)
+        game.handle_click((tower.x, tower.y), 1)
+        self.assertEqual(game.towers, [])
+        self.assertIsNone(game.pending_cell)
+
+    def test_deleting_tower_refunds_half_the_cost(self):
+        ui = self.ui
+        game = ui.Game()
+        cell = (2 * ui.CELL + 20, 20)
+        game.handle_click(cell, 1)
+        game.handle_click(cell, 1)
+        self.assertEqual([tower.kind for tower in game.towers], ["rapid"])
+        self.assertEqual(game.gold, 200)
+
+        game.handle_click(cell, 1)
+        self.assertEqual(game.delete_cell, (2, 0))
+        self.assertEqual(game.gold, 200)
+
+        game.handle_click(cell, 1)
+        self.assertEqual(game.towers, [])
+        self.assertEqual(game.gold, 250)
+
+    def test_cannon_delete_refunds_half_of_its_own_cost(self):
+        ui = self.ui
+        game = ui.Game()
+        tower = ui.Tower(2, 0, "cannon")
+        game.towers = [tower]
+        game.delete_cell = (2, 0)
 
         game.handle_click((tower.x, tower.y), 1)
 
-        self.assertEqual(game.towers, [])
-        self.assertIsNone(game.pending_cell)
+        self.assertEqual(game.gold, 300 + ui.TOWER_TYPES["cannon"]["cost"] // 2)
         self.assertIsNone(game.delete_cell)
 
     def test_invalid_click_closes_delete_without_preview(self):
         game = self.ui.Game()
         game.towers = [self.ui.Tower(2, 0, "rapid")]
         game.delete_cell = (2, 0)
-
         game.handle_click(self.ui.WAYPOINTS[1], 1)
-
         self.assertIsNone(game.delete_cell)
         self.assertIsNone(game.pending_cell)
         self.assertEqual(len(game.towers), 1)
@@ -254,19 +267,14 @@ class UiBehaviorTests(unittest.TestCase):
     def test_tower_can_be_confirmed_during_active_wave(self):
         game = self.ui.Game()
         game.start_wave()
-
         game.handle_click((20, 20), 1)
         game.handle_click((20, 20), 1)
-
         self.assertEqual([(tower.col, tower.row) for tower in game.towers], [(0, 0)])
 
     def test_path_cells_are_not_buildable(self):
         game = self.ui.Game()
         game.handle_click((self.ui.WAYPOINTS[1][0], self.ui.WAYPOINTS[1][1]), 1)
         self.assertEqual(game.towers, [])
-
-    def test_clamp_handles_middle_value(self):
-        self.assertEqual(self.ui.clamp(55, 0, 100), 55)
 
     def test_run_accepts_frame_limit(self):
         app = self.ui.App(screen=self.screen)
@@ -276,7 +284,7 @@ class UiBehaviorTests(unittest.TestCase):
     def test_wall_does_not_hide_right_path(self):
         app = self.ui.App(screen=self.screen)
         app.game.draw(self.screen)
-        self.assertEqual(self.screen.get_at((860, 180))[:3], self.ui.PATH)
+        self.assertEqual(self.screen.get_at((860, 180))[:3], self.ui.ROAD)
 
     def test_pending_range_draws_without_creating_tower(self):
         game = self.ui.Game()
@@ -284,10 +292,8 @@ class UiBehaviorTests(unittest.TestCase):
         before = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
         after = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
         game.draw(before)
-
         game.handle_click(position, 1)
         game.draw(after)
-
         radius = self.ui.TOWER_TYPES["rapid"]["range"]
         edge = (position[0] + radius - 1, position[1])
         self.assertNotEqual(before.get_at(edge), after.get_at(edge))
@@ -302,10 +308,8 @@ class UiBehaviorTests(unittest.TestCase):
         preview = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
         game.draw(range_only)
         self.ui.draw_tower_range(range_only, center, stats)
-
         game.pending_cell = (col, row)
         game.draw(preview)
-
         tower_rect = pygame.Rect(
             col * self.ui.CELL + 4,
             row * self.ui.CELL + 4,
@@ -322,10 +326,8 @@ class UiBehaviorTests(unittest.TestCase):
         cannon_preview = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
         game.handle_click(position, 1)
         game.draw(rapid_preview)
-
         game.selected = "cannon"
         game.draw(cannon_preview)
-
         rapid_edge = (position[0] + self.ui.TOWER_TYPES["rapid"]["range"] - 1, position[1])
         self.assertNotEqual(rapid_preview.get_at(rapid_edge), cannon_preview.get_at(rapid_edge))
 
@@ -335,39 +337,34 @@ class UiBehaviorTests(unittest.TestCase):
         plain = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
         hovered = pygame.Surface((self.ui.WIDTH, self.ui.HEIGHT))
         game.draw(plain)
-
         game.hover_cell = (7, 7)
         game.draw(hovered)
-
         center = (7 * self.ui.CELL + 20, 7 * self.ui.CELL + 20)
         edge = (center[0] + self.ui.TOWER_TYPES["rapid"]["range"] - 1, center[1])
         self.assertNotEqual(plain.get_at(edge), hovered.get_at(edge))
 
     def test_cannon_has_viable_single_target_balance(self):
         cannon = self.ui.TOWER_TYPES["cannon"]
-        self.assertEqual(cannon["cost"], 200)
+        self.assertEqual(cannon["cost"], 500)
         self.assertEqual(cannon["damage"], 75)
         self.assertEqual(cannon["fire_rate"], 60)
 
     def test_mcqueen_applies_enemy_type_multipliers(self):
-        self.assertIn("kind", inspect.signature(self.ui.Enemy).parameters)
+        stats = self.ui.ENEMY_TYPES["mcqueen"]
         mcqueen = self.ui.Enemy(50, 1.5, 8, "mcqueen")
-
         self.assertEqual(mcqueen.kind, "mcqueen")
-        self.assertEqual(mcqueen.max_hp, 30)
-        self.assertEqual(mcqueen.hp, 30)
-        self.assertEqual(mcqueen.speed, 3.0)
-        self.assertEqual(mcqueen.gold, 6)
-        self.assertEqual(mcqueen.life_damage, 2)
+        self.assertEqual(mcqueen.max_hp, int(50 * stats["hp_multiplier"]))
+        self.assertEqual(mcqueen.hp, int(50 * stats["hp_multiplier"]))
+        self.assertEqual(mcqueen.speed, 1.5 * stats["speed_multiplier"])
+        self.assertEqual(mcqueen.gold, int(8 * stats["gold_multiplier"]))
+        self.assertEqual(mcqueen.life_damage, stats["life_damage"])
 
     def test_every_fifth_spawn_is_mcqueen(self):
         game = self.ui.Game()
         game.start_wave()
-
         for _ in range(5):
             game.spawn_timer = 0
             game.update()
-
         self.assertEqual(
             [getattr(enemy, "kind", None) for enemy in game.enemies],
             ["normal", "normal", "normal", "normal", "mcqueen"],
@@ -377,11 +374,9 @@ class UiBehaviorTests(unittest.TestCase):
         game = self.ui.Game()
         game.wave = 1
         game.start_wave()
-
         for _ in range(6):
             game.spawn_timer = 0
             game.update()
-
         kinds = [enemy.kind for enemy in game.enemies]
         self.assertEqual(kinds.count("normal"), 5)
         self.assertEqual(kinds.count("mcqueen"), 1)
@@ -395,26 +390,20 @@ class UiBehaviorTests(unittest.TestCase):
             game.update()
         game.enemies.clear()
         game.wave_active = False
-
         game.start_wave()
         game.spawn_timer = 0
         game.update()
-
         self.assertEqual(getattr(game.enemies[0], "kind", None), "normal")
 
     def test_mcqueen_leak_removes_two_lives(self):
         self.assertIn("kind", inspect.signature(self.ui.Enemy).parameters)
         game = self.ui.Game()
-        game.drain_events()
         enemy = self.ui.Enemy(50, 1.5, 8, "mcqueen")
         enemy.alive = False
         enemy.reached_end = True
         game.enemies = [enemy]
-
         game.update()
-
         self.assertEqual(game.lives, 1)
-        self.assertIn("lives_changed", game.drain_events())
 
     def test_tower_prioritizes_enemy_on_final_path_section(self):
         tower = self.ui.Tower(18, 3, "rapid")
@@ -426,15 +415,13 @@ class UiBehaviorTests(unittest.TestCase):
         far_enemy.x, far_enemy.y = 820, 180
         far_enemy.waypoint_index = len(self.ui.WAYPOINTS) - 2
         far_enemy.distance_travelled = 1500
-
         projectiles = tower.update([near_enemy, far_enemy])
-
         self.assertEqual(projectiles[0].target, far_enemy)
 
 
 class UiUxSkillTests(unittest.TestCase):
     """Tests that ui.py follows the game-ui-ux skill: anchors, scaling,
-    safe area, focus navigation, screen stack, event-driven HUD."""
+    safe area, mouse navigation, screen stack, HUD."""
 
     @classmethod
     def setUpClass(cls):
@@ -451,60 +438,30 @@ class UiUxSkillTests(unittest.TestCase):
     def key(self, key):
         return pygame.event.Event(pygame.KEYDOWN, {"key": key})
 
-    # --- anchors + containers ---
-
-    def test_anchor_place_centers_in_canvas(self):
-        ui = self.ui
-        rect = ui.Layout.place(ui.SCREEN_RECT, ("center", "middle"), 100, 50)
-        self.assertEqual(rect.center, (500, 360))
-
-    def test_anchor_point_offsets_from_edge(self):
-        ui = self.ui
-        point = ui.Layout.anchor_point(ui.SCREEN_RECT, ("left", "bottom"), (30, -40))
-        self.assertEqual(point, (30, 680))
-
-    def test_hbox_flows_children_with_gap(self):
-        ui = self.ui
-        area = ui.pygame.Rect(300, 638, 200, 70)
-        rects = ui.Layout.hbox(area, [80, 80], 70, 40)
-        self.assertEqual(len(rects), 2)
-        self.assertEqual(rects[0].topleft, (300, 638))
-        self.assertEqual(rects[1].left - rects[0].right, 40)
-
-    def test_vbox_flows_children_vertically(self):
-        ui = self.ui
-        rects = ui.Layout.vbox(ui.SCREEN_RECT, 3, 260, 52, 16)
-        self.assertEqual(len(rects), 3)
-        self.assertEqual(rects[1].top - rects[0].bottom, 16)
-        self.assertEqual(rects[0].centerx, 500)
-
     def test_shop_cards_share_one_layout_for_draw_and_click(self):
         ui = self.ui
         cards = dict(ui.shop_cards())
         self.assertEqual(set(cards), set(ui.TOWER_TYPES))
         card_rects = list(cards.values())
         for rect in card_rects:
-            # cards live inside the bottom UI bar
             self.assertGreaterEqual(rect.top, ui.HEIGHT - ui.UI_BAR_HEIGHT)
             self.assertLessEqual(rect.bottom, ui.HEIGHT)
-        # the card fill surface matches the frame rect size
         hud = ui.Hud(ui.minecraft_font(24), ui.minecraft_font(10))
         for kind, rect in cards.items():
             self.assertEqual(hud.cards[kind].get_size(), rect.size)
-        # clicking the drawn card center selects that tower
         game = ui.Game()
         game.handle_click(cards["cannon"].center, 1)
         self.assertEqual(game.selected, "cannon")
         game.handle_click(cards["rapid"].center, 1)
         self.assertEqual(game.selected, "rapid")
 
-    def test_keyboard_type_change_updates_pending_selection(self):
+    def test_shop_click_changes_tower_type_and_keeps_preview(self):
+        ui = self.ui
         app = self.make_app()
-        app.state = self.ui.ScreenState.GAME
+        app.state = ui.ScreenState.GAME
         app.game.handle_click((20, 20), 1)
-
-        app.handle_event(self.key(pygame.K_2))
-
+        card = dict(ui.shop_cards())["cannon"]
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": card.center}))
         self.assertEqual(app.game.selected, "cannon")
         self.assertEqual(app.game.pending_cell, (0, 0))
 
@@ -512,9 +469,7 @@ class UiUxSkillTests(unittest.TestCase):
         app = self.make_app()
         app.state = self.ui.ScreenState.GAME
         app.game.pending_cell = (0, 0)
-
         app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, {"pos": (60, 20)}))
-
         self.assertEqual(app.game.pending_cell, (0, 0))
         self.assertEqual(app.game.hover_cell, (1, 0))
 
@@ -523,33 +478,36 @@ class UiUxSkillTests(unittest.TestCase):
         app.state = self.ui.ScreenState.GAME
         app.game.pending_cell = (0, 0)
         app.handle_event(self.key(pygame.K_ESCAPE))
-
         app.handle_event(
             pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": (60, 20)})
         )
-
         self.assertEqual(app.state, self.ui.ScreenState.PAUSE)
         self.assertEqual(app.game.pending_cell, (0, 0))
         self.assertEqual(app.game.towers, [])
 
-    # --- scaling / letterbox ---
+    def test_pause_menu_stacks_three_buttons_centered(self):
+        ui = self.ui
+        rects = ui.pause_items()
+        self.assertEqual(len(rects), 3)
+        self.assertEqual([rect.centerx for rect in rects], [500, 500, 500])
+        self.assertEqual([rect.centery for rect in rects], [292, 360, 428])
 
     def test_letterbox_preserves_aspect_on_ultrawide(self):
         ui = self.ui
-        dst = ui.letterbox_rect((2560, 1080), (1000, 720))
+        dst = ui.letterbox_rect((2560, 1080))
         self.assertEqual(dst.height, 1080)
         ratio = dst.width / dst.height
         self.assertAlmostEqual(ratio, 1000 / 720, places=2)
 
     def test_letterbox_centers_in_window(self):
         ui = self.ui
-        dst = ui.letterbox_rect((1920, 1080), (1000, 720))
+        dst = ui.letterbox_rect((1920, 1080))
         self.assertEqual(dst.centerx, 960)
         self.assertEqual(dst.centery, 540)
 
     def test_letterbox_scale_down_small_window(self):
         ui = self.ui
-        dst = ui.letterbox_rect((500, 500), (1000, 720))
+        dst = ui.letterbox_rect((500, 500))
         self.assertLessEqual(dst.width, 500)
         self.assertLessEqual(dst.height, 500)
 
@@ -559,7 +517,6 @@ class UiUxSkillTests(unittest.TestCase):
         fake_window = pygame.Surface((1920, 1080))
         with patch.object(ui.pygame.display, "get_surface", return_value=fake_window):
             virtual = app._to_virtual((960, 540))
-        # window center maps to canvas center, not to (500, 360) -> (480, 260)-ish
         self.assertAlmostEqual(virtual[0], 500, delta=2)
         self.assertAlmostEqual(virtual[1], 360, delta=2)
 
@@ -568,11 +525,9 @@ class UiUxSkillTests(unittest.TestCase):
         app = self.make_app()
         self.assertEqual(app._to_virtual((44, 260)), (44, 260))
 
-    # --- safe area ---
-
     def test_safe_rect_insets_uniformly(self):
         ui = self.ui
-        safe = ui.safe_rect(ui.SCREEN_RECT, ui.SAFE_MARGIN)
+        safe = ui.SAFE
         self.assertEqual(
             (safe.width, safe.height),
             (ui.WIDTH - 2 * ui.SAFE_MARGIN, ui.HEIGHT - 2 * ui.SAFE_MARGIN),
@@ -585,58 +540,75 @@ class UiUxSkillTests(unittest.TestCase):
         self.assertGreaterEqual(app.hud.gold_pos[0], ui.SAFE_MARGIN)
         self.assertGreaterEqual(app.hud.lives_pos[0], ui.SAFE_MARGIN)
 
-    # --- focus navigation ---
-
-    def test_menu_initial_focus_is_play(self):
+    def test_keyboard_does_not_drive_menus(self):
         ui = self.ui
         app = self.make_app()
+        for key in (pygame.K_DOWN, pygame.K_UP, pygame.K_RIGHT, pygame.K_RETURN, pygame.K_j):
+            app.handle_event(self.key(key))
         self.assertEqual(app.state, ui.ScreenState.MENU)
-        self.assertIs(app.focus.current, app.focus.items[0])
+        app.push(ui.ScreenState.GAME)
+        app.handle_event(self.key(pygame.K_ESCAPE))
+        self.assertEqual(app.state, ui.ScreenState.PAUSE)
+        app.handle_event(self.key(pygame.K_DOWN))
+        app.handle_event(self.key(pygame.K_RETURN))
+        self.assertEqual(app.state, ui.ScreenState.PAUSE)
 
-    def test_menu_arrow_moves_focus_and_enter_activates(self):
+    def test_menu_click_opens_settings(self):
         ui = self.ui
         app = self.make_app()
-        app.handle_event(self.key(pygame.K_DOWN))
-        self.assertIs(app.focus.current, app.focus.items[1])
-        app.handle_event(self.key(pygame.K_RETURN))
+        pos = app.settings_button.center
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos}))
         self.assertEqual(app.state, ui.ScreenState.SETTINGS)
 
-    def test_enter_on_focused_play_opens_game(self):
+    def test_menu_settings_button_sits_under_play_with_label_below(self):
         ui = self.ui
         app = self.make_app()
-        app.handle_event(self.key(pygame.K_RETURN))
-        self.assertEqual(app.state, ui.ScreenState.GAME)
+        self.assertEqual(app.settings_button.centerx, app.play_button.centerx)
+        self.assertGreater(app.settings_button.top, app.play_button.bottom)
+        self.assertLess(app.settings_button.top - app.play_button.bottom, 100)
+        self.assertGreater(ui.MENU_SETTINGS_POS[1], app.settings_button.bottom)
 
-    def test_mouse_hover_moves_focus(self):
+    def test_space_starts_wave_only_in_game(self):
+        ui = self.ui
         app = self.make_app()
-        app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, {"pos": app.settings_button.center}))
-        self.assertIs(app.focus.current, app.focus.items[1])
+        app.handle_event(self.key(pygame.K_SPACE))
+        self.assertEqual(app.state, ui.ScreenState.MENU)
+        self.assertEqual(app.game.wave, 0)
+        app.push(ui.ScreenState.GAME)
+        app.handle_event(self.key(pygame.K_SPACE))
+        self.assertTrue(app.game.wave_active)
+        self.assertEqual(app.game.wave, 1)
 
-    def test_settings_arrows_adjust_volume_when_focused(self):
+    def test_volume_drag_follows_mouse(self):
         ui = self.ui
         app = self.make_app()
         app.state = ui.ScreenState.SETTINGS
-        initial = app.volume
-        app.handle_event(self.key(pygame.K_RIGHT))
-        self.assertEqual(app.volume, min(100, initial + 5))
-        app.handle_event(self.key(pygame.K_LEFT))
-        self.assertEqual(app.volume, initial)
+        track = app.volume_track
+        pos = (track.left + track.width // 4, track.centery)
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos}))
+        self.assertTrue(app.dragging_volume)
+        self.assertEqual(app.volume, 25)
+        app.handle_event(pygame.event.Event(pygame.MOUSEMOTION, {"pos": (track.right, track.centery)}))
+        self.assertEqual(app.volume, 100)
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, {"button": 1, "pos": pos}))
+        self.assertFalse(app.dragging_volume)
 
-    def test_settings_back_pops_to_previous_screen(self):
+    def test_pause_button_clicks(self):
         ui = self.ui
         app = self.make_app()
-        app.handle_event(self.key(pygame.K_RETURN))  # menu -> game
-        app.handle_event(self.key(pygame.K_ESCAPE))  # game -> pause
-        app.focus.move("down")  # pause: resume -> settings
-        app.focus.move("down")  # pause: settings -> main menu
-        app.focus.move("up")  # back to settings
-        app.handle_event(self.key(pygame.K_RETURN))  # open settings
+        resume, settings, menu = app.pause_items
+        app.state = ui.ScreenState.GAME
+        app.handle_event(self.key(pygame.K_ESCAPE))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": menu.center}))
+        self.assertEqual(app.state, ui.ScreenState.MENU)
+        app.push(ui.ScreenState.GAME)
+        app.handle_event(self.key(pygame.K_ESCAPE))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": settings.center}))
         self.assertEqual(app.state, ui.ScreenState.SETTINGS)
-        app.handle_event(self.key(pygame.K_ESCAPE))  # pop settings
-        # stack returns to the screen settings was pushed from
+        app.handle_event(self.key(pygame.K_ESCAPE))
         self.assertEqual(app.state, ui.ScreenState.PAUSE)
-
-    # --- screen stack ---
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": resume.center}))
+        self.assertEqual(app.state, ui.ScreenState.GAME)
 
     def test_escape_pauses_and_resumes(self):
         ui = self.ui
@@ -672,82 +644,90 @@ class UiUxSkillTests(unittest.TestCase):
         app.state = ui.ScreenState.GAME
         app.game.start_wave()
         app.handle_event(self.key(pygame.K_ESCAPE))
-        app.focus.activate()  # RESUME
+        resume = app.pause_items[0]
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": resume.center}))
         self.assertEqual(app.state, ui.ScreenState.GAME)
         self.assertTrue(app.game.wave_active)
 
-    def test_game_over_enter_restarts(self):
+    def test_game_over_click_restarts(self):
         ui = self.ui
         app = self.make_app()
         app.state = ui.ScreenState.GAME
         app.game.lives = 0
         app.game.update()
         self.assertTrue(app.game.game_over)
-        app.handle_event(self.key(pygame.K_RETURN))
+        app.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": (500, 360)}))
         self.assertFalse(app.game.game_over)
         self.assertEqual(app.game.lives, 3)
 
-    # --- event-driven HUD ---
-
-    def test_game_emits_events_on_state_changes(self):
+    def test_game_tracks_gold_and_lives_without_an_event_bus(self):
         ui = self.ui
         game = ui.Game()
-        self.assertIn("gold_changed", game.drain_events())
+        self.assertEqual((game.gold, game.lives, game.wave), (300, 3, 0))
         game.start_wave()
-        events = game.drain_events()
-        self.assertIn("wave_changed", events)
-
-    def test_game_emits_gold_on_kill_and_lives_on_leak(self):
-        ui = self.ui
-        game = ui.Game()
-        game.drain_events()
-        enemy = ui.Enemy(50, 1.5, 8)
-        enemy.hp = 0
-        enemy.alive = False
-        game.enemies = [enemy]
+        self.assertEqual(game.wave, 1)
+        killed = ui.Enemy(50, 1.5, 8)
+        killed.hp = 0
+        killed.alive = False
+        game.enemies = [killed]
         game.update()
-        self.assertIn("gold_changed", game.drain_events())
-        game.drain_events()
+        self.assertEqual(game.gold, 308)
         leaker = ui.Enemy(50, 1.5, 8)
         leaker.reached_end = True
         game.enemies = [leaker]
         game.update()
-        self.assertIn("lives_changed", game.drain_events())
+        self.assertEqual(game.lives, 2)
 
-    def test_hud_rerenders_only_on_events(self):
+    def test_hud_never_shows_negative_lives(self):
         ui = self.ui
-        app = self.make_app()
-        app.state = ui.ScreenState.GAME
-        app.draw()  # first frame: consumes initial events, renders HUD
-        wave_before = app.hud.wave_surf
-        gold_before = app.hud.gold_surf
-        self.assertIsNotNone(wave_before)
-        self.assertIsNotNone(gold_before)
-        app.hud.handle([], 0, 0, 0)  # no events -> no re-render
-        self.assertIs(app.hud.wave_surf, wave_before)
-        self.assertIs(app.hud.gold_surf, gold_before)
-        app.hud.handle(["wave_changed"], 0, 0, 5)
-        self.assertIsNot(app.hud.wave_surf, wave_before)
-        self.assertIs(app.hud.gold_surf, gold_before)
+        hud = ui.Hud(ui.minecraft_font(24), ui.minecraft_font(10))
+        game = ui.Game()
+        negative = pygame.Surface((ui.WIDTH, ui.HEIGHT))
+        zero = pygame.Surface((ui.WIDTH, ui.HEIGHT))
+        game.lives = -3
+        hud.draw(negative, game)
+        game.lives = 0
+        hud.draw(zero, game)
+        self.assertEqual(pygame.image.tobytes(negative, "RGB"), pygame.image.tobytes(zero, "RGB"))
 
-    def test_shop_card_border_is_white_only_when_selected(self):
+    def test_shop_card_border_uses_accent_only_when_selected(self):
         ui = self.ui
         hud = ui.Hud(ui.minecraft_font(24), ui.minecraft_font(10))
         surface = pygame.Surface((ui.WIDTH, ui.HEIGHT))
-        hud.draw(surface, "cannon")
+        game = ui.Game()
+        game.selected = "cannon"
+        hud.draw(surface, game)
         cards = dict(ui.shop_cards())
         inset = (1, 1)
-        # selected card: white outline
         selected = cards["cannon"]
-        self.assertEqual(surface.get_at((selected.left + inset[0], selected.top + inset[1]))[:3], ui.WHITE)
-        # inactive card: outline blends into its own fill
+        self.assertEqual(surface.get_at((selected.left + inset[0], selected.top + inset[1]))[:3], ui.ACCENT)
         inactive = cards["rapid"]
         self.assertEqual(
             surface.get_at((inactive.left + inset[0], inactive.top + inset[1]))[:3],
             ui.TOWER_TYPES["rapid"]["color"],
         )
 
-    # --- resize / presentation ---
+    def test_palette_is_one_scheme_with_readable_contrast(self):
+        ui = self.ui
+        readable = [
+            (ui.TEXT, ui.PANEL),
+            (ui.TEXT_MUTED, ui.PANEL),
+            (ui.ACCENT, ui.PANEL),
+            (ui.DANGER_TEXT, ui.PANEL),
+            (ui.INK, ui.ACCENT),
+            (ui.TEXT, ui.DANGER),
+            (ui.INK, ui.TOWER_RAPID),
+            (ui.INK, ui.TOWER_CANNON),
+        ]
+        for foreground, background in readable:
+            self.assertGreaterEqual(contrast(foreground, background), 4.5, (foreground, background))
+        self.assertGreaterEqual(contrast(ui.ROAD, ui.GRASS), 2.0)
+        self.assertGreaterEqual(contrast(ui.PANEL_BORDER, ui.PANEL), 1.8)
+        self.assertNotEqual(ui.TOWER_RAPID, ui.TOWER_CANNON)
+        self.assertGreater(ui.GRASS[1], ui.GRASS[0])
+        self.assertGreater(ui.GRASS[1], ui.GRASS[2])
+        self.assertGreater(ui.ROAD[0], ui.ROAD[2])
+        self.assertGreater(ui.ROAD[1], ui.ROAD[2])
 
     def test_resize_event_does_not_crash_headless(self):
         app = self.make_app()
